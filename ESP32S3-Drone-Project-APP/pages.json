@@ -1,0 +1,66 @@
+{
+	"pages": [
+		{
+			"path": "pages/index/index",
+			"style": {
+				"navigationBarTitleText": "无人机上位机",
+				"pageOrientation": "landscape",
+				"navigationBarBackgroundColor": "#1a1a2e",
+				"navigationBarTextStyle": "white"
+			}
+		},
+		{
+			"path": "pages/webview/webview",
+			"style": {
+				"navigationBarTitleText": "",
+				"pageOrientation": "landscape",
+				"navigationStyle": "default",
+				"app-plus": {
+					"titleNView": {
+						"type": "transparent",
+						"backgroundColor": "#00000000",
+						"buttons": [
+							{
+								"text": "\u2715 \u65ad\u5f00",
+								"fontSize": "13px",
+								"color": "#ffffff",
+								"background": "rgba(220,38,38,0.88)",
+								"float": "left",
+								"width": "68px",
+								"fontWeight": "bold"
+							},
+							{
+								"text": "\u25cf \u622a\u56fe 0",
+								"fontSize": "13px",
+								"color": "#ffffff",
+								"background": "rgba(37,99,235,0.88)",
+								"float": "left",
+								"width": "90px",
+								"fontWeight": "bold"
+							}
+						]
+					}
+				}
+			}
+		},
+		{
+			"path": "pages/recordings/recordings",
+			"style": {
+				"navigationBarTitleText": "",
+				"pageOrientation": "landscape",
+				"navigationStyle": "custom",
+				"app-plus": {
+					"titleNView": false
+				}
+			}
+		}
+	],
+	"globalStyle": {
+		"pageOrientation": "landscape",
+		"navigationBarTextStyle": "black",
+		"navigationBarTitleText": "",
+		"navigationBarBackgroundColor": "#1a1a2e",
+		"backgroundColor": "#0f0f23"
+	},
+	"uniIdRouter": {}
+}
