@@ -12,10 +12,7 @@
 #include <Preferences.h>
 #include "util.h"
 
-extern float channelZero[16];
-extern float channelMax[16];
-extern float rollChannel, pitchChannel, throttleChannel, yawChannel, armedChannel, modeChannel;
-extern float safeDistance;
+#include "globals.h"
 
 /** Preferences存储对象 */
 Preferences storage;
@@ -83,7 +80,12 @@ Parameter parameters[] = {
 	{"RC_THROTTLE", &throttleChannel},
 	{"RC_YAW", &yawChannel},
 	{"RC_MODE", &modeChannel},
-	{"OBS_SAFE_DIST", &safeDistance},
+	{"gyro_bias_alpha", nullptr},  // Gyro bias is auto-managed, no storage needed
+	{"madgwick_beta", &madgwickBeta},
+	{"notch_freq", nullptr},  // Notch filter frequency, set via gyroNotchFilter.setParams()
+	{"notch_q", nullptr},     // Notch filter Q factor
+	{"hover_perf_log", &hoverPerfLog},
+	{"hover_throttle", &hoverThrottle},
 };
 
 /**
@@ -94,6 +96,7 @@ Parameter parameters[] = {
 void setupParameters() {
 	storage.begin("flix", false);
 	for (auto &parameter : parameters) {
+		if (!parameter.variable) continue;  // Skip read-only parameters
 		if (!storage.isKey(parameter.name)) {
 			storage.putFloat(parameter.name, *parameter.variable);
 		}
@@ -127,6 +130,7 @@ const char *getParameterName(int index) {
  */
 float getParameter(int index) {
 	if (index < 0 || index >= parametersCount()) return NAN;
+	if (!parameters[index].variable) return NAN;  // Read-only parameter
 	return *parameters[index].variable;
 }
 
@@ -138,6 +142,7 @@ float getParameter(int index) {
 float getParameter(const char *name) {
 	for (auto &parameter : parameters) {
 		if (strcmp(parameter.name, name) == 0) {
+			if (!parameter.variable) return NAN;  // Read-only parameter
 			return *parameter.variable;
 		}
 	}
@@ -153,6 +158,7 @@ float getParameter(const char *name) {
 bool setParameter(const char *name, const float value) {
 	for (auto &parameter : parameters) {
 		if (strcmp(parameter.name, name) == 0) {
+			if (!parameter.variable) return false;  // Read-only parameter
 			*parameter.variable = value;
 			return true;
 		}
@@ -171,6 +177,7 @@ void syncParameters() {
 	if (motorsActive()) return;
 
 	for (auto &parameter : parameters) {
+		if (!parameter.variable) continue;  // Skip read-only parameters
 		if (parameter.value == *parameter.variable) continue;
 		if (isnan(parameter.value) && isnan(*parameter.variable)) continue;
 		storage.putFloat(parameter.name, *parameter.variable);
@@ -183,6 +190,7 @@ void syncParameters() {
  */
 void printParameters() {
 	for (auto &parameter : parameters) {
+		if (!parameter.variable) continue;  // Skip read-only parameters
 		print("%s = %g\n", parameter.name, *parameter.variable);
 	}
 }

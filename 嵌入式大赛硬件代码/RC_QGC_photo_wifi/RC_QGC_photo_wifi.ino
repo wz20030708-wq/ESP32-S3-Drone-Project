@@ -8,6 +8,8 @@
  * 基于FreeRTOS多任务架构的四旋翼无人机飞控固件。
  * 开发板: ESP32 Dev Module 或 WeMOS D1 MINI ESP32
  * 
+ * 飞行模式: STAB(增稳) + OBSTACLE(避障)
+ * 
  * 架构说明:
  * - 双核FreeRTOS任务调度，飞行控制为最高优先级
  * - Core 1: 飞行控制任务(最高优先级)
@@ -17,6 +19,7 @@
 #include "vector.h"
 #include "quaternion.h"
 #include "util.h"
+#include "madgwick.h"
 
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
@@ -26,6 +29,8 @@
 #define WIFI_ENABLED 1
 /** 是否启用摄像头功能 */
 #define CAMERA_ENABLED 1
+
+#include "globals.h"
 
 // ==================== FreeRTOS 对象 ====================
 
@@ -41,6 +46,75 @@ SemaphoreHandle_t mutexState = NULL;
 
 /** 互斥锁: 保护Serial.print()和MAVLink print buffer避免输出交织 */
 SemaphoreHandle_t mutexSerial = NULL;
+
+// ==================== CPU使用率监控 ====================
+
+/** FreeRTOS任务状态数组（静态预分配，避免每次调用时动态分配堆内存） */
+#define MAX_TASK_COUNT 32
+static TaskStatus_t taskStats[MAX_TASK_COUNT];
+/** 上次采样时所有任务的运行时间之和 */
+static uint32_t prevAllTasksRunTime = 0;
+/** 上次采样时空闲任务的运行时间之和 */
+static uint32_t prevIdleRunTime = 0;
+/** 上次CPU使用率计算时间点 */
+static float lastCPUCalcTime = 0;
+/** 当前CPU使用率百分比 (0~100) */
+static float cpuUsagePercent = 0;
+/** CPU使用率计算间隔 (s) */
+#define CPU_CALC_INTERVAL 2.0
+
+/**
+ * @brief 获取当前CPU使用率
+ * 
+ * 基于FreeRTOS运行时统计，通过空闲任务时间占比反推CPU占用率。
+ * 
+ * @return CPU使用率百分比 (0~100)
+ */
+float getCPUUsage() {
+  return cpuUsagePercent;
+}
+
+/**
+ * @brief 更新CPU使用率计算
+ * 
+ * 使用uxTaskGetSystemState()获取各任务的运行时计数器，
+ * 累加所有空闲任务（IDLE0/IDLE1）的运行时间，通过空闲比例
+ * 反推真实CPU占用率。使用静态预分配数组，无动态内存开销。
+ */
+void updateCPUUsage() {
+  float now = t;
+  if (isnan(now) || isnan(lastCPUCalcTime)) return;
+  if (now - lastCPUCalcTime < CPU_CALC_INTERVAL) return;
+
+  int maxTasks = uxTaskGetNumberOfTasks();
+  if (maxTasks > MAX_TASK_COUNT) maxTasks = MAX_TASK_COUNT;
+
+  uint32_t totalRunTime;
+  int taskCount = uxTaskGetSystemState(taskStats, maxTasks, &totalRunTime);
+
+  // 累加所有任务的运行时间 + 空闲任务的运行时间
+  uint32_t allTasksRunTime = 0;
+  uint32_t idleRunTime = 0;
+  for (int i = 0; i < taskCount; i++) {
+    allTasksRunTime += taskStats[i].ulRunTimeCounter;
+    if (strstr(taskStats[i].pcTaskName, "IDLE")) {
+      idleRunTime += taskStats[i].ulRunTimeCounter;
+    }
+  }
+
+  uint32_t allDelta = allTasksRunTime - prevAllTasksRunTime;
+  uint32_t idleDelta = idleRunTime - prevIdleRunTime;
+
+  prevAllTasksRunTime = allTasksRunTime;
+  prevIdleRunTime = idleRunTime;
+  lastCPUCalcTime = now;
+
+  if (allDelta > 0) {
+    float idleRatio = (float)idleDelta / allDelta;
+    if (idleRatio > 1.0f) idleRatio = 1.0f;
+    cpuUsagePercent = (1.0f - idleRatio) * 100.0f;
+  }
+}
 
 // ==================== 全局变量 ====================
 
@@ -124,7 +198,7 @@ void setup() {
 	setupRC();
 	setLED(false);
 
-	print("创建自由RTOS任务...\n");
+	print("创建 FreeRTOS 任务...\n");
 
 	// ==================== 创建 FreeRTOS 任务 ====================
 
@@ -194,7 +268,6 @@ void flightControlTask(void *pvParameters) {
 		estimate();
 		control();
 		sendMotors();
-
 		taskYIELD();
 	}
 }
@@ -247,7 +320,7 @@ void backgroundTask(void *pvParameters) {
 		}
 #if CAMERA_ENABLED
 		cameraTick++;
-		if (cameraTick >= 20) {
+		if (cameraTick >= 15) {
 			cameraCapture();
 			cameraTick = 0;
 		}
@@ -255,6 +328,7 @@ void backgroundTask(void *pvParameters) {
 		logData();
 		syncParameters();
 		blinkLED();
+		updateCPUUsage();
 
 		vTaskDelayUntil(&lastWakeTime, pdMS_TO_TICKS(10));
 	}

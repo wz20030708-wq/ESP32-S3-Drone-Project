@@ -5,12 +5,14 @@
  * 纯 JavaScript 实现，不依赖任何原生模块或第三方库
  */
 
+import { log } from './log.js'
+
 // ==================== 配置信息 ====================
 const CONFIG = {
 	// AccessKey ID（请替换为你的 AccessKey ID）
-	accessKeyId: '填入自己的阿里云AK',
+	accessKeyId: '',
 	// AccessKey Secret（请替换为你的 AccessKey Secret）
-	accessKeySecret: '填入自己的阿里云SK',
+	accessKeySecret: '',
 	// 区域
 	regionId: 'cn-shanghai',
 	// OSS 配置
@@ -23,8 +25,6 @@ const CONFIG = {
 }
 
 // ==================== 检测模型定义 ====================
-// 所有模型共用 DetectObject API（免费），通过客户端过滤实现分类检测
-// 如需更高精度，可购买专项 API 后替换 action 和 endpoint
 const MODELS = {
 	all: {
 		key: 'all',
@@ -77,10 +77,10 @@ export function getModelList() {
 export function setModel(key) {
 	if (MODELS[key]) {
 		currentModel = key
-		console.log('[模型切换] 当前模型:', MODELS[key].label)
+		log.info('[模型切换] 当前模型:', MODELS[key].label)
 		return true
 	}
-	console.warn('[模型切换] 无效的模型 key:', key)
+	log.warn('[模型切换] 无效的模型 key:', key)
 	return false
 }
 
@@ -101,7 +101,7 @@ export function getCurrentFilter() {
 
 // ==================== 纯JS SHA-1 / HMAC-SHA1 / Base64 实现 ====================
 
-function sha1(str) {
+export function sha1(str) {
 	function rotateLeft(n, s) { return (n << s) | (n >>> (32 - s)) }
 	function toHex(val) {
 		let hex = ''
@@ -142,11 +142,7 @@ function sha1(str) {
 	return toHex(H0) + toHex(H1) + toHex(H2) + toHex(H3) + toHex(H4)
 }
 
-// 自测 SHA-1
-console.log('[加密自测] SHA1("") =', sha1(''), '| 期望: da39a3ee5e6b4b0d3255bfef95601890afd80709')
-console.log('[加密自测] SHA1("abc") =', sha1('abc'), '| 期望: a9993e364706816aba3e25717850c26c9cd0d89d')
-
-function hmacSha1Base64(text, key) {
+export function hmacSha1Base64(text, key) {
 	const BLOCK_SIZE = 64
 	const keyBytes = []
 	for (let i = 0; i < key.length; i++) keyBytes.push(key.charCodeAt(i) & 0xFF)
@@ -192,10 +188,6 @@ function bytesToBinaryString(bytes) {
 	return result
 }
 
-// 自测 HMAC-SHA1
-const testHmac = hmacSha1Base64('what do ya want for nothing?', 'Jefe')
-console.log('[加密自测] HMAC-SHA1("Jefe", "what..") =', testHmac, '| 期望: 7/zfauXrL6LSdBbV8YTfnCWafHk=')
-
 // ==================== 阿里云签名工具函数 ====================
 
 function signNRandom() { return String(Math.round(Math.random() * 100000000000000)) }
@@ -213,8 +205,10 @@ function ksort(params) {
 	return sorted
 }
 
-function encode(str) {
-	return encodeURIComponent(str).replace(/!/g, '%21').replace(/'/g, '%27').replace(/\(/g, '%28').replace(/\)/g, '%29').replace(/\*/g, '%2A')
+// RFC3986 中 encodeURIComponent 未编码的保留字符，需额外编码
+const RFC3986_UNRESERVED = { '!': '%21', "'": '%27', '(': '%28', ')': '%29', '*': '%2A' }
+export function encode(str) {
+	return encodeURIComponent(str).replace(/[!*'()]/g, ch => RFC3986_UNRESERVED[ch])
 }
 
 function objToParam(param) {
@@ -240,7 +234,7 @@ function getSignature(signedParams, method, secret) {
  * 使用 OSS 表单上传（POST + Policy） + uni.uploadFile
  */
 export async function uploadImageToHost(localPath) {
-	console.log('[上传] 开始上传图片到OSS...')
+	log.debug('[上传] 开始上传图片到OSS...')
 
 	const filename = 'SS_' + Date.now() + '.png'
 	const objectKey = `${CONFIG.oss.folder}/${filename}`
@@ -266,8 +260,8 @@ export async function uploadImageToHost(localPath) {
 	// 签名：base64(hmac-sha1(AccessKeySecret, policy))
 	const signature = hmacSha1Base64(policy, CONFIG.accessKeySecret)
 
-	console.log('[上传] Policy base64:', policy.substring(0, 50) + '...')
-	console.log('[上传] Signature:', signature)
+	log.debug('[上传] Policy base64:', policy.substring(0, 50) + '...')
+	log.debug('[上传] Signature:', signature)
 
 	// 使用 uni.uploadFile 进行标准文件上传
 	return new Promise((resolve, reject) => {
@@ -284,29 +278,18 @@ export async function uploadImageToHost(localPath) {
 			},
 			timeout: 30000,
 			success: (res) => {
-				console.log('[上传] OSS响应状态:', res.statusCode)
+				log.debug('[上传] OSS响应状态:', res.statusCode)
 				if (res.statusCode === 200) {
-					console.log('[上传] OSS上传成功:', publicUrl)
-					// 验证：等1秒后检查文件是否存在
-					setTimeout(() => {
-						uni.request({
-							url: publicUrl,
-							method: 'HEAD',
-							timeout: 5000,
-							success: (checkRes) => {
-								console.log('[上传] 文件验证:', checkRes.statusCode)
-							}
-						})
-					}, 1000)
+					log.info('[上传] OSS上传成功:', publicUrl)
 					resolve(publicUrl)
 				} else {
 					const msg = typeof res.data === 'string' ? res.data.substring(0, 500) : JSON.stringify(res.data)
-					console.error('[上传] OSS上传失败:', res.statusCode, msg)
+					log.error('[上传] OSS上传失败:', res.statusCode, msg)
 					reject(new Error('OSS上传失败: HTTP ' + res.statusCode))
 				}
 			},
 			fail: (err) => {
-				console.error('[上传] OSS请求失败:', err)
+				log.error('[上传] OSS请求失败:', err)
 				reject(err)
 			}
 		})
@@ -351,9 +334,9 @@ export async function detectObjects(imageUrl) {
 		// 所有参数放入 URL 查询字符串（ImageURL是短链接，不会触发414）
 		const fullUrl = 'https://' + endpoint + '/?' + objToParam(request_).substring(1)
 
-		console.log(`[阿里云检测] 模型: ${model.label}, 发起请求...`)
-		console.log('[阿里云检测] 请求URL长度:', fullUrl.length)
-		console.log('[阿里云检测] 请求URL前500:', fullUrl.substring(0, 500))
+		log.debug(`[阿里云检测] 模型: ${model.label}, 发起请求...`)
+		log.debug('[阿里云检测] 请求URL长度:', fullUrl.length)
+		log.debug('[阿里云检测] 请求URL前500:', fullUrl.substring(0, 500))
 
 		return new Promise((resolve, reject) => {
 			uni.request({
@@ -362,10 +345,10 @@ export async function detectObjects(imageUrl) {
 				header: { 'Content-Type': 'application/x-www-form-urlencoded' },
 				timeout: 20000,
 				success: (res) => {
-					console.log('[阿里云检测] 响应状态:', res.statusCode)
+					log.debug('[阿里云检测] 响应状态:', res.statusCode)
 					// 打印完整响应数据
 					const rawData = typeof res.data === 'string' ? res.data : JSON.stringify(res.data)
-					console.log('[阿里云检测] 原始响应:', rawData)
+					log.debug('[阿里云检测] 原始响应:', rawData)
 					if (res.statusCode === 200) {
 						resolve(res.data)
 					} else {
@@ -373,13 +356,13 @@ export async function detectObjects(imageUrl) {
 					}
 				},
 				fail: (err) => {
-					console.error('[阿里云检测] 请求失败:', err)
+					log.error('[阿里云检测] 请求失败:', err)
 					reject(err)
 				}
 			})
 		})
 	} catch (error) {
-		console.error('[阿里云检测] 异常:', error)
+		log.error('[阿里云检测] 异常:', error)
 		throw error
 	}
 }
@@ -391,11 +374,11 @@ export async function detectObjects(imageUrl) {
  */
 export async function detectLocalImage(localImagePath) {
 	const model = MODELS[currentModel]
-	console.log(`[检测流程] 模型: ${model.label}, 图片已上传，URL长度:`, 0)
+	log.debug('[检测流程] 模型: ' + model.label + ', 开始上传图片...')
 
 	// 步骤1：上传本地图片到图床，获取短URL
 	const imageUrl = await uploadImageToHost(localImagePath)
-	console.log(`[检测流程] 图片已上传，URL长度:`, imageUrl.length)
+	log.debug(`[检测流程] 图片已上传，URL长度:`, imageUrl.length)
 
 	// 步骤2：使用短URL调用阿里云检测
 	const result = await detectObjects(imageUrl)
@@ -408,10 +391,10 @@ export async function detectLocalImage(localImagePath) {
  * 解析检测结果
  */
 export function parseDetectionResult(response) {
-	console.log('[解析] 原始响应结构:', JSON.stringify(response, null, 2))
+	log.debug('[解析] 原始响应结构:', JSON.stringify(response, null, 2))
 
 	if (!response || response.Code) {
-		console.error('[阿里云检测] API错误:', response?.Code, response?.Message)
+		log.error('[阿里云检测] API错误:', response?.Code, response?.Message)
 		return []
 	}
 
@@ -451,9 +434,9 @@ export function parseDetectionResult(response) {
 		})
 	}
 
-	console.log(`[阿里云检测] 检测到 ${objects.length} 个物体`)
+	log.info(`[阿里云检测] 检测到 ${objects.length} 个物体`)
 	if (objects.length > 0) {
-		console.log('[阿里云检测] 检测结果:', JSON.stringify(objects))
+		log.debug('[阿里云检测] 检测结果:', JSON.stringify(objects))
 	}
 
 	return objects

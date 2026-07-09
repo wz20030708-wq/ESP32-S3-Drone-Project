@@ -127,6 +127,9 @@
 </template>
 
 <script>
+	import { log } from '@/utils/log.js'
+	import { formatFileSize } from '@/utils/format.js'
+
 	export default {
 		data() {
 			return {
@@ -170,20 +173,20 @@
 				try {
 					// 将 _doc 相对路径转为绝对路径（兼容不同版本）
 					let absPath = plus.io.convertLocalFileSystemURL('_doc/Screenshots/')
-					console.log('截图目录路径:', absPath)
+					log.debug('截图目录路径:', absPath)
 
 					const dir = plus.android.newObject('java.io.File', absPath)
 
 					if (!plus.android.invoke(dir, 'exists')) {
 						plus.android.invoke(dir, 'mkdirs')
-						console.log('目录不存在，已创建')
+						log.debug('目录不存在，已创建')
 						this.fileList = []
 						return
 					}
 
 					const files = plus.android.invoke(dir, 'listFiles')
 					if (!files || files.length === 0) {
-						console.log('目录为空')
+						log.debug('目录为空')
 						this.fileList = []
 						return
 					}
@@ -204,14 +207,8 @@
 						const date = plus.android.invoke(sdf, 'format',
 							plus.android.newObject('java.util.Date', lastModified))
 
-						let size = ''
-						if (sizeBytes < 1024) {
-							size = sizeBytes + ' B'
-						} else if (sizeBytes < 1024 * 1024) {
-							size = Math.round(sizeBytes / 1024) + ' KB'
-						} else {
-							size = (sizeBytes / (1024 * 1024)).toFixed(1) + ' MB'
-						}
+						// 使用共享 formatFileSize 工具格式化
+						const size = formatFileSize(sizeBytes)
 
 						result.push({
 							name: name,
@@ -223,9 +220,9 @@
 
 					result.sort((a, b) => b.date.localeCompare(a.date))
 					this.fileList = result
-					console.log('加载截图文件:', result.length, '张')
+					log.info('加载截图文件:', result.length, '张')
 				} catch (e) {
-					console.error('读取截图文件失败:', e)
+					log.error('读取截图文件失败:', e)
 					this.fileList = []
 				}
 				// #endif
@@ -314,7 +311,7 @@
 									plus.android.invoke(f, 'delete')
 								}
 							} catch (e) {
-								console.error('删除失败:', e)
+								log.error('删除失败:', e)
 							}
 							// #endif
 							// 如果删的是最后一张，索引前移
@@ -402,7 +399,7 @@
 					this.loadFiles()
 					uni.showToast({ title: '已删除 ' + deletedCount + ' 张', icon: 'none' })
 				} catch (e) {
-					console.error('批量删除失败:', e)
+					log.error('批量删除失败:', e)
 					uni.showToast({ title: '删除失败', icon: 'none' })
 				}
 				// #endif
@@ -441,9 +438,9 @@
 						this._saveSelectedToAlbum(currentIndex + 1)
 					},
 					(err) => {
-						console.error('保存失败:', file.name, err)
-						this._saveSelectedToAlbum(currentIndex + 1)
-					}
+							log.error('保存失败:', file.name, err)
+							this._saveSelectedToAlbum(currentIndex + 1)
+						}
 				)
 				// #endif
 				// #ifndef APP-PLUS
@@ -453,9 +450,9 @@
 						this._saveSelectedToAlbum(currentIndex + 1)
 					},
 					fail: (err) => {
-						console.error('保存失败:', file.name, err)
-						this._saveSelectedToAlbum(currentIndex + 1)
-					}
+							log.error('保存失败:', file.name, err)
+							this._saveSelectedToAlbum(currentIndex + 1)
+						}
 				})
 				// #endif
 			},
@@ -468,9 +465,9 @@
 						uni.showToast({ title: '已保存到相册', icon: 'none' })
 					},
 					(err) => {
-						console.error('保存失败:', err)
-						uni.showToast({ title: '保存失败', icon: 'none' })
-					}
+							log.error('保存失败:', err)
+							uni.showToast({ title: '保存失败', icon: 'none' })
+						}
 				)
 				// #endif
 				// #ifndef APP-PLUS
@@ -480,9 +477,9 @@
 						uni.showToast({ title: '已保存到相册', icon: 'none' })
 					},
 					fail: (err) => {
-						console.error('保存失败:', err)
-						uni.showToast({ title: '保存失败', icon: 'none' })
-					}
+							log.error('保存失败:', err)
+							uni.showToast({ title: '保存失败', icon: 'none' })
+						}
 				})
 				// #endif
 			}

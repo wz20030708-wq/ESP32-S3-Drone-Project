@@ -134,11 +134,12 @@ public:
 	 * @brief 将四元数标记为无效(NAN)
 	 */
 	void invalidate() {
-		w = NAN;
-		x = NAN;
-		y = NAN;
-		z = NAN;
-	}
+			w = NAN;
+			x = NAN;
+			y = NAN;
+			z = NAN;
+			eulerDirty = true;
+		}
 
 	/**
 	 * @brief 计算四元数模长
@@ -152,12 +153,14 @@ public:
 	 * @brief 四元数归一化
 	 */
 	void normalize() {
-		float n = norm();
-		w /= n;
-		x /= n;
-		y /= n;
-		z /= n;
-	}
+			float n = norm();
+			if (n == 0) return;
+			w /= n;
+			x /= n;
+			y /= n;
+			z /= n;
+			eulerDirty = true;
+		}
 
 	/**
 	 * @brief 将四元数转换为轴角表示
@@ -188,29 +191,34 @@ public:
 	 * @return 欧拉角(弧度): x=roll, y=pitch, z=yaw
 	 */
 	Vector toEuler() const {
-		Vector euler;
-		float sqx = x * x;
-		float sqy = y * y;
-		float sqz = z * z;
-		float sqw = w * w;
-		float sarg = -2 * (x * z - w * y) / (sqx + sqy + sqz + sqw);
-		if (sarg < -1) sarg = -1;
-		if (sarg > 1) sarg = 1;
-		if (sarg <= -0.99999) {
-			euler.x = 0;
-			euler.y = -0.5 * PI;
-			euler.z = (x == 0 && y == 0) ? 0 : -2 * atan2(y, x);
-		} else if (sarg >= 0.99999) {
-			euler.x = 0;
-			euler.y = 0.5 * PI;
-			euler.z = (x == 0 && y == 0) ? 0 : 2 * atan2(y, x);
-		} else {
-			euler.x = atan2(2 * (y * z + w * x), sqw - sqx - sqy + sqz);
-			euler.y = asin(sarg);
-			euler.z = atan2(2 * (x * y + w * z), sqw + sqx - sqy - sqz);
+			if (!eulerDirty) return cachedEuler;
+
+			Vector euler;
+			float sqx = x * x;
+			float sqy = y * y;
+			float sqz = z * z;
+			float sqw = w * w;
+			float sarg = -2 * (x * z - w * y) / (sqx + sqy + sqz + sqw);
+			if (sarg < -1) sarg = -1;
+			if (sarg > 1) sarg = 1;
+			if (sarg <= -0.99999) {
+				euler.x = 0;
+				euler.y = -0.5 * PI;
+				euler.z = (x == 0 && y == 0) ? 0 : -2 * atan2(y, x);
+			} else if (sarg >= 0.99999) {
+				euler.x = 0;
+				euler.y = 0.5 * PI;
+				euler.z = (x == 0 && y == 0) ? 0 : 2 * atan2(y, x);
+			} else {
+				euler.x = atan2(2 * (y * z + w * x), sqw - sqx - sqy + sqz);
+				euler.y = asin(sarg);
+				euler.z = atan2(2 * (x * y + w * z), sqw + sqx - sqy - sqz);
+			}
+
+			cachedEuler = euler;
+			eulerDirty = false;
+			return euler;
 		}
-		return euler;
-	}
 
 	/**
 	 * @brief 获取Roll角(弧度)
@@ -369,11 +377,17 @@ public:
 	 * @return 输出字符数
 	 */
 	size_t printTo(Print& p) const {
-		size_t r = 0;
-		r += p.print(w, 15) + p.print(" ");
-		r += p.print(x, 15) + p.print(" ");
-		r += p.print(y, 15) + p.print(" ");
-		r += p.print(z, 15);
-		return r;
-	}
-};
+			size_t r = 0;
+			r += p.print(w, 15) + p.print(" ");
+			r += p.print(x, 15) + p.print(" ");
+			r += p.print(y, 15) + p.print(" ");
+			r += p.print(z, 15);
+			return r;
+		}
+
+	private:
+		/** 欧拉角缓存(避免重复计算) */
+		mutable Vector cachedEuler;
+		/** 欧拉角缓存脏标志 */
+		mutable bool eulerDirty = true;
+	};

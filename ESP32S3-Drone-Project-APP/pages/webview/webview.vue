@@ -30,6 +30,21 @@
 			<text class="detect-text">AI 识别中...</text>
 		</view>
 
+		<!-- 物体检测警告弹窗：检测到物体时自动弹出（使用 cover-view 覆盖 web-view） -->
+		<cover-view class="alert-popup" v-if="showAlertPopup && detectionResults.length > 0">
+			<cover-view class="alert-popup-header">
+				<cover-view class="alert-popup-icon">&#x26A0;</cover-view>
+				<cover-view class="alert-popup-title">检测到 {{ detectionResults.length }} 个物体</cover-view>
+				<cover-view class="alert-popup-close" @tap="showAlertPopup = false">&times;</cover-view>
+			</cover-view>
+			<cover-view class="alert-popup-body">
+				<cover-view class="alert-item" v-for="(item, index) in detectionResults" :key="index">
+					<cover-view class="alert-item-name">{{ item.name }}</cover-view>
+					<cover-view class="alert-item-score">{{ (item.score * 100).toFixed(1) }}%</cover-view>
+				</cover-view>
+			</cover-view>
+		</cover-view>
+
 		<!-- 检测结果浮窗 -->
 		<view class="result-popup" v-if="showResultPopup" @tap="showResultPopup = false">
 			<view class="result-content" @tap.stop>
@@ -64,6 +79,8 @@
 
 <script>
 	import { detectLocalImage, parseDetectionResult, getModelList, setModel, getCurrentModel, getCurrentFilter } from '@/utils/aliyun-api.js'
+	import { log } from '@/utils/log.js'
+	import { formatTimestamp } from '@/utils/format.js'
 
 	// 导航栏按钮预定义配置，避免每次截图都重建对象
 	const NAV_BTN_DISCONNECT = {
@@ -85,6 +102,12 @@
 		fontWeight: 'bold'
 	}
 
+	// Android 原生类缓存：首次调用 _drawAnnotations 时导入并缓存，避免每轮检测重复 JNI 导入
+	let nativeClassCache = null
+
+	// 截图裁剪区域（避开导航栏等 UI 元素），数值与原硬编码一致
+	const SCREENSHOT_CLIP = { top: '120px', left: '10px', width: '620px', height: '600px' }
+
 	export default {
 		data() {
 			return {
@@ -96,7 +119,8 @@
 				_wasCapturing: false,
 				// 阿里云检测相关
 				isDetecting: false,
-				showResultPopup: false,
+			showResultPopup: false,
+			showAlertPopup: false, // 物体检测警告弹窗
 				detectionResults: [],
 				lastScreenshotPath: '',
 				lastAnnotatedPath: '',
@@ -193,7 +217,7 @@
 			},
 
 			onWebviewError(e) {
-				console.error('WebView 加载失败:', e)
+				log.error('WebView 加载失败:', e)
 				this.stopScreenshotCapture()
 				this.showFloatingImage = false
 				uni.showModal({
@@ -270,7 +294,7 @@
 						})
 					}
 				} catch (e) {
-					console.error('更新导航栏按钮失败:', e)
+					log.error('更新导航栏按钮失败:', e)
 				}
 				// #endif
 			},
@@ -287,7 +311,7 @@
 					// 获取子 WebView（web-view 组件）
 					const children = currentWebview.children()
 					if (!children || children.length === 0) {
-						console.warn('截图跳过：子 WebView 未就绪')
+						log.warn('截图跳过：子 WebView 未就绪')
 						return
 					}
 					const childWebview = children[0]
@@ -304,35 +328,24 @@
 							this._saveBitmap(bitmap)
 						},
 						(e) => {
-							console.error('截图绘制失败:', e)
+							log.error('截图绘制失败:', e)
 							bitmap.clear()
 						},
 						{
 							bit: 'ARGB',
 							check: true,
-							clip: {
-								top: '120px',
-								left: '10px',
-								width: '620px',
-								height: '600px'
-							}
+							clip: SCREENSHOT_CLIP
 						}
 					)
 				} catch (e) {
-					console.error('截图异常:', e)
+					log.error('截图异常:', e)
 				}
 				// #endif
 			},
 
 			_saveBitmap(bitmap) {
 				// 生成时间戳文件名
-				const now = new Date()
-				const ts = now.getFullYear() +
-					String(now.getMonth() + 1).padStart(2, '0') +
-					String(now.getDate()).padStart(2, '0') +
-					String(now.getHours()).padStart(2, '0') +
-					String(now.getMinutes()).padStart(2, '0') +
-					String(now.getSeconds()).padStart(2, '0')
+				const ts = formatTimestamp(new Date())
 				const filename = 'SS_' + ts + '.png'
 				const savePath = '_doc/Screenshots/' + filename
 
@@ -346,7 +359,7 @@
 							'\u25cf \u622a\u56fe ' + this.screenshotCount,
 							'rgba(37,99,235,0.88)'
 						)
-						console.log('截图已保存:', res.target)
+						log.debug('截图已保存:', res.target)
 
 						// 自动触发阿里云检测
 						if (this.enableAutoDetect && !this.isDetecting) {
@@ -360,7 +373,7 @@
 						}
 					},
 					(e) => {
-						console.error('截图保存失败:', e)
+						log.error('截图保存失败:', e)
 						bitmap.clear()
 					}
 				)
@@ -371,17 +384,17 @@
 			async detectAndAnnotate(imagePath, bitmap) {
 				this.isDetecting = true
 				this.lastError = ''
-				console.log('===== [检测] 开始新一轮检测 =====')
-				console.log('[检测] 图片路径:', imagePath)
+				log.debug('===== [检测] 开始新一轮检测 =====')
+				log.debug('[检测] 图片路径:', imagePath)
 
 				try {
 					// 步骤1：上传图片到图床 → 调用阿里云检测
-					console.log('[检测] 步骤1: 上传图片并调用阿里云 API...')
+					log.debug('[检测] 步骤1: 上传图片并调用阿里云 API...')
 					const response = await detectLocalImage(imagePath)
-					console.log('[检测] 步骤1: API 原始响应:', JSON.stringify(response).substring(0, 500))
+					log.debug('[检测] 步骤1: API 原始响应:', JSON.stringify(response).substring(0, 500))
 
 					// 步骤2：解析检测结果
-					console.log('[检测] 步骤2: 解析检测结果...')
+					log.debug('[检测] 步骤2: 解析检测结果...')
 					const allObjects = parseDetectionResult(response)
 					// 根据当前模型过滤（如"人物"模式只保留 human/person 等类别）
 					const typeFilter = getCurrentFilter()
@@ -389,43 +402,45 @@
 						? allObjects.filter(obj => typeFilter.some(f => obj.name.toLowerCase().includes(f.toLowerCase())))
 						: allObjects
 					if (typeFilter) {
-						console.log(`[检测] 步骤2: 过滤后 ${objects.length}/${allObjects.length} 个物体 (模式: ${this.currentModelLabel})`)
+						log.debug(`[检测] 步骤2: 过滤后 ${objects.length}/${allObjects.length} 个物体 (模式: ${this.currentModelLabel})`)
 					}
 					this.detectionResults = objects
-					console.log(`[检测] 步骤2: 解析完成，检测到 ${objects.length} 个物体`)
+					log.debug(`[检测] 步骤2: 解析完成，检测到 ${objects.length} 个物体`)
 					if (objects.length > 0) {
 						objects.forEach((obj, i) => {
-							console.log(`[检测]   物体${i+1}: ${obj.name}, 置信度: ${(obj.score*100).toFixed(1)}%, 位置:`, obj.box)
+							log.debug(`[检测]   物体${i+1}: ${obj.name}, 置信度: ${(obj.score*100).toFixed(1)}%, 位置:`, obj.box)
 						})
 					}
 
 					// 步骤3：绘制标注
-					if (objects.length > 0) {
-						console.log('[检测] 步骤3: 开始绘制标注框...')
-						// 传入 imagePath 作为回退：如果 Bitmap.toBase64Data() 失败，则从文件读取
-						const annotatedPath = await this._drawAnnotations(bitmap, objects, imagePath)
-						console.log('[检测] 步骤3: 标注图片已生成:', annotatedPath)
-						this.annotatedImageSrc = annotatedPath
-						this.floatingImageSrc = annotatedPath
-						this.showResultPopup = true
-						console.log('[浮层] 已更新为标注图片')
-					} else {
-						console.log('[检测] 未检测到物体，显示原始截图')
-						this.floatingImageSrc = imagePath
-						this.lastError = '未检测到物体'
-					}
-					this.showFloatingImage = true
+				if (objects.length > 0) {
+					log.debug('[检测] 步骤3: 开始绘制标注框...')
+					// 传入 imagePath 作为回退：如果 Bitmap.toBase64Data() 失败，则从文件读取
+					const annotatedPath = await this._drawAnnotations(bitmap, objects, imagePath)
+					log.debug('[检测] 步骤3: 标注图片已生成:', annotatedPath)
+					this.annotatedImageSrc = annotatedPath
+					this.floatingImageSrc = annotatedPath
+					this.showResultPopup = true
+					this.showAlertPopup = true
+					log.debug('[浮层] 已更新为标注图片')
+				} else {
+					log.debug('[检测] 未检测到物体，显示原始截图')
+					this.floatingImageSrc = imagePath
+					this.lastError = '未检测到物体'
+					this.showAlertPopup = false
+				}
+				this.showFloatingImage = true
 
 				} catch (error) {
-					console.error('[检测] 管线异常:', error)
-					console.error('[检测] 错误详情:', error.message, error.stack)
+					log.error('[检测] 管线异常:', error)
+					log.error('[检测] 错误详情:', error.message, error.stack)
 					this.lastError = '检测失败: ' + (error.message || '未知错误')
 					// 检测失败仍显示原始截图
 					this.floatingImageSrc = imagePath
 					this.showFloatingImage = true
 				} finally {
 					this.isDetecting = false
-					console.log('===== [检测] 本轮结束 =====')
+					log.debug('===== [检测] 本轮结束 =====')
 					try { bitmap.clear() } catch (ex) {}
 				}
 			},
@@ -438,23 +453,28 @@
 				return new Promise((resolve, reject) => {
 					// #ifdef APP-PLUS
 					try {
-						console.log('[标注] 使用 Android Native Canvas 绘制...')
-						console.log(`[标注] 检测到 ${objects.length} 个物体，图片: ${imagePath}`)
+						log.debug('[标注] 使用 Android Native Canvas 绘制...')
+						log.debug(`[标注] 检测到 ${objects.length} 个物体，图片: ${imagePath}`)
 
-						// 导入 Android 原生类
-						const BitmapFactory = plus.android.importClass('android.graphics.BitmapFactory')
-						const Bitmap = plus.android.importClass('android.graphics.Bitmap')
-						const Canvas = plus.android.importClass('android.graphics.Canvas')
-						const Paint = plus.android.importClass('android.graphics.Paint')
-						const Color = plus.android.importClass('android.graphics.Color')
-						const FileOutputStream = plus.android.importClass('java.io.FileOutputStream')
-						const File = plus.android.importClass('java.io.File')
-						const BitmapCompressFormat = plus.android.importClass('android.graphics.Bitmap$CompressFormat')
-						const PaintStyle = plus.android.importClass('android.graphics.Paint$Style')
+						// 复用缓存的 Android 原生类：首次调用执行 importClass，后续直接读取
+						if (!nativeClassCache) {
+							nativeClassCache = {
+								BitmapFactory: plus.android.importClass('android.graphics.BitmapFactory'),
+								Bitmap: plus.android.importClass('android.graphics.Bitmap'),
+								Canvas: plus.android.importClass('android.graphics.Canvas'),
+								Paint: plus.android.importClass('android.graphics.Paint'),
+								Color: plus.android.importClass('android.graphics.Color'),
+								FileOutputStream: plus.android.importClass('java.io.FileOutputStream'),
+								File: plus.android.importClass('java.io.File'),
+								BitmapCompressFormat: plus.android.importClass('android.graphics.Bitmap$CompressFormat'),
+								PaintStyle: plus.android.importClass('android.graphics.Paint$Style')
+							}
+						}
+						const { BitmapFactory, Bitmap, Canvas, Paint, Color, FileOutputStream, File, BitmapCompressFormat, PaintStyle } = nativeClassCache
 
 						// 转换 file:// 路径为 Android 原生路径
 						const nativePath = imagePath.replace('file://', '')
-						console.log('[标注] 原生路径:', nativePath)
+						log.debug('[标注] 原生路径:', nativePath)
 
 						// 加载图片
 						const srcBitmap = BitmapFactory.decodeFile(nativePath)
@@ -465,7 +485,7 @@
 
 						const imgWidth = srcBitmap.getWidth()
 						const imgHeight = srcBitmap.getHeight()
-						console.log(`[标注] 图片尺寸: ${imgWidth}x${imgHeight}`)
+						log.debug(`[标注] 图片尺寸: ${imgWidth}x${imgHeight}`)
 
 						// 创建可绘制的 Bitmap 副本
 						const drawBitmap = srcBitmap.copy(Bitmap.Config.ARGB_8888, true)
@@ -513,35 +533,29 @@
 							canvas.drawRect(left, labelY, left + labelW, labelY + labelH, labelBgPaint)
 							canvas.drawText(labelText, left + 16, labelY + 36, textPaint)
 
-							console.log(`[标注]   框${i+1}: ${labelText} @ (${left},${top}) ${w}x${h}`)
+							log.debug(`[标注]   框${i+1}: ${labelText} @ (${left},${top}) ${w}x${h}`)
 						})
 
 						// 保存标注图片
-						const now = new Date()
-						const ts = now.getFullYear() +
-							String(now.getMonth() + 1).padStart(2, '0') +
-							String(now.getDate()).padStart(2, '0') +
-							String(now.getHours()).padStart(2, '0') +
-							String(now.getMinutes()).padStart(2, '0') +
-							String(now.getSeconds()).padStart(2, '0')
+						const ts = formatTimestamp(new Date())
 
 						// 与原始截图同目录
 						const dir = imagePath.substring(0, imagePath.lastIndexOf('/'))
 						const annotatedPath = dir + '/SS_Annotated_' + ts + '.png'
 						const nativeOutPath = annotatedPath.replace('file://', '')
 
-						console.log('[标注] 保存到:', nativeOutPath)
+						log.debug('[标注] 保存到:', nativeOutPath)
 						const outFile = new File(nativeOutPath)
 						const fos = new FileOutputStream(outFile)
 						drawBitmap.compress(BitmapCompressFormat.PNG, 100, fos)
 						fos.close()
 						drawBitmap.recycle()
 
-						console.log('[标注] 标注图片已保存:', annotatedPath)
+						log.debug('[标注] 标注图片已保存:', annotatedPath)
 						resolve(annotatedPath)
 
 					} catch (e) {
-						console.error('[标注] 绘制异常:', e.message, e.stack)
+						log.error('[标注] 绘制异常:', e.message, e.stack)
 						reject(e)
 					}
 					// #endif
@@ -735,6 +749,93 @@
 	.no-result text {
 		font-size: 26rpx;
 		color: #64748b;
+	}
+
+	/* 物体检测警告弹窗 */
+	.alert-popup {
+		position: fixed;
+		top: 1100rpx;
+		left: 1300rpx;
+		right: 800rpx;
+		z-index: 998;
+		background: linear-gradient(135deg, #7f1d1d 0%, #dc2626 100%);
+		border: 2rpx solid rgba(255, 255, 255, 0.3);
+		border-radius: 20rpx;
+		box-shadow: 0 8rpx 32rpx rgba(220, 38, 38, 0.35);
+		overflow: hidden;
+		animation: alertSlideIn 0.3s ease-out;
+	}
+
+	@keyframes alertSlideIn {
+		from {
+			opacity: 0;
+			transform: translateY(-30rpx);
+		}
+		to {
+			opacity: 1;
+			transform: translateY(0);
+		}
+	}
+
+	.alert-popup-header {
+		display: flex;
+		align-items: center;
+		padding: 20rpx 24rpx;
+		background: rgba(234, 179, 8, 0.15);
+		border-bottom: 1rpx solid rgba(234, 179, 8, 0.2);
+	}
+
+	.alert-popup-icon {
+		font-size: 32rpx;
+		margin-right: 12rpx;
+		color: #facc15;
+	}
+
+	.alert-popup-title {
+		flex: 1;
+		font-size: 26rpx;
+		font-weight: 600;
+		color: #facc15;
+	}
+
+	.alert-popup-close {
+		font-size: 36rpx;
+		color: #94a3b8;
+		line-height: 1;
+		padding: 0 8rpx;
+	}
+
+	.alert-popup-body {
+		padding: 12rpx 24rpx 20rpx;
+		max-height: 300rpx;
+		overflow-y: auto;
+	}
+
+	.alert-item {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		padding: 14rpx 0;
+		border-bottom: 1rpx solid rgba(255, 255, 255, 0.06);
+	}
+
+	.alert-item:last-child {
+		border-bottom: none;
+	}
+
+	.alert-item-name {
+		font-size: 24rpx;
+		color: #e2e8f0;
+		font-weight: 500;
+	}
+
+	.alert-item-score {
+		font-size: 22rpx;
+		color: #facc15;
+		font-weight: 600;
+		background: rgba(234, 179, 8, 0.12);
+		padding: 4rpx 16rpx;
+		border-radius: 16rpx;
 	}
 
 	/* 右下角浮层：实时标注图片（cover-view） */

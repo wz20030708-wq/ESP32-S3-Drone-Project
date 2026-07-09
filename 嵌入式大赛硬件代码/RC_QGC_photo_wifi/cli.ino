@@ -15,16 +15,7 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 
-extern SemaphoreHandle_t mutexState;
-extern SemaphoreHandle_t mutexSerial;
-
-extern const int MOTOR_REAR_LEFT, MOTOR_REAR_RIGHT, MOTOR_FRONT_RIGHT, MOTOR_FRONT_LEFT;
-extern const int RAW, ACRO, STAB, AUTO, OBSTACLE;
-extern float t, dt, loopRate;
-extern uint16_t channels[16];
-extern float controlRoll, controlPitch, controlThrottle, controlYaw, controlMode;
-extern int mode;
-extern bool armed;
+#include "globals.h"
 
 float getParameter(const char *name);
 bool setParameter(const char *name, float value);
@@ -40,25 +31,26 @@ const char* motd =
 "/________\\_______\\_______\\_______\\ \n"
 "                                       \n"
 "输入命令，然后回车:\n"
-"help - 帮助show help\n"
+"help - 显示帮助信息\n"
 "p - 显示所有参数\n"
 "p <name> - 显示指定参数\n"
 "p <name> <value> - 设置参数\n"
-"preset - 重置参数reset\n"
-"mfr, mfl, mrr, mrl - 测试马达 (为了安全不要装桨叶！！！)\n"
-"cr - 校准RC遥控calibrate RC\n"
-"ca - 校准陀螺仪加速度calibrate accel\n"
-"ps - 显示pitch/roll/yaw姿态\n"
+"preset - 重置所有参数\n"
+"mfr/mfl/mrr/mrl - 测试单个电机 (安全起见请勿安装桨叶！)\n"
+"cr - 校准RC遥控器\n"
+"ca - 校准加速度计\n"
+"ps - 显示姿态(欧拉角)\n"
 "rc - 显示RC遥控数据\n"
 "psq - 显示姿态四元数\n"
 "imu - 显示IMU数据\n"
 "time - 显示时间信息\n"
-"wifi - 显示Wi-Fi显示\n"
-"mot - 显示motor输出\n"
-"sys - 显示系统info信息\n"
-"raw/stab/acro/auto/obstacle - 飞行模式设定\n"
-"arm - 解锁无人机arm\n"
-"disarm - 锁定无人机disarm\n"
+"wifi - 显示Wi-Fi信息\n"
+"mot - 显示电机输出\n"
+"sys - 显示系统信息\n"
+"stab - 切换到自稳模式\n"
+"obstacle - 切换到障碍规避模式\n"
+"arm - 解锁无人机\n"
+"disarm - 锁定无人机\n"
 "log [dump] - 打印日志\n"
 "reset - 重置无人机状态\n"
 "reboot - 重启无人机\n";
@@ -103,6 +95,26 @@ void pause(float duration) {
 #endif
 		delay(50);
 	}
+}
+
+/**
+ * @brief 设置飞行模式(线程安全)
+ * @param newMode 目标飞行模式
+ */
+void setFlightMode(int newMode) {
+    xSemaphoreTake(mutexState, portMAX_DELAY);
+    mode = newMode;
+    xSemaphoreGive(mutexState);
+}
+
+/**
+ * @brief 设置解锁状态(线程安全)
+ * @param arm true为解锁，false为锁定
+ */
+void setArmed(bool arm) {
+    xSemaphoreTake(mutexState, portMAX_DELAY);
+    armed = arm;
+    xSemaphoreGive(mutexState);
 }
 
 /**
@@ -161,34 +173,14 @@ void doCommand(String str, bool echo = false) {
 		xSemaphoreGive(mutexState);
 		print("landed: %d\n", _landed);
 	} else if (command == "arm") {
-		xSemaphoreTake(mutexState, portMAX_DELAY);
-		armed = true;
-		xSemaphoreGive(mutexState);
-	} else if (command == "disarm") {
-		xSemaphoreTake(mutexState, portMAX_DELAY);
-		armed = false;
-		xSemaphoreGive(mutexState);
-	} else if (command == "raw") {
-		xSemaphoreTake(mutexState, portMAX_DELAY);
-		mode = RAW;
-		xSemaphoreGive(mutexState);
-	} else if (command == "stab") {
-		xSemaphoreTake(mutexState, portMAX_DELAY);
-		mode = STAB;
-		xSemaphoreGive(mutexState);
-	} else if (command == "acro") {
-		xSemaphoreTake(mutexState, portMAX_DELAY);
-		mode = ACRO;
-		xSemaphoreGive(mutexState);
-	} else if (command == "auto") {
-		xSemaphoreTake(mutexState, portMAX_DELAY);
-		mode = AUTO;
-		xSemaphoreGive(mutexState);
-	} else if (command == "obstacle") {
-		xSemaphoreTake(mutexState, portMAX_DELAY);
-		mode = OBSTACLE;
-		xSemaphoreGive(mutexState);
-	} else if (command == "rc") {
+			setArmed(true);
+		} else if (command == "disarm") {
+			setArmed(false);
+		} else if (command == "stab") {
+			setFlightMode(STAB);
+		} else if (command == "obstacle") {
+			setFlightMode(OBSTACLE);
+		} else if (command == "rc") {
 		print("channels: ");
 		for (int i = 0; i < 16; i++) {
 			print("%u ", channels[i]);

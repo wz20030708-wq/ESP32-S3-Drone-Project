@@ -64,35 +64,27 @@ static LowPassFilter<float> chipFilter(EMA_ALPHA);
  * @brief 初始化ADC电压测量模块
  */
 void setupADC() {
-	print("设置ADC电压测量\n");
+		print("设置ADC电压测量\n");
 
-	analogReadResolution(12);
-	analogSetAttenuation(ADC_11db);
+		analogReadResolution(12);
+		analogSetAttenuation(ADC_11db);
 
-	for (int i = 0; i < 8; i++) {
-		analogRead(ADC_PIN_MOTOR);
-		analogRead(ADC_PIN_CHIP);
+		for (int i = 0; i < 8; i++) {
+			analogRead(ADC_PIN_MOTOR);
+			analogRead(ADC_PIN_CHIP);
+		}
+
+		motorAdcRaw = analogRead(ADC_PIN_MOTOR);
+		chipAdcRaw  = analogRead(ADC_PIN_CHIP);
+
+		motorVoltage = adcToVoltage(motorAdcRaw, ADC_CAL_MOTOR);
+		chipVoltage  = adcToVoltage(chipAdcRaw,  ADC_CAL_CHIP);
+
+		print("ADC 电压测量初始化完成\n");
+		print("电机电压引脚: GPIO%d, 芯片电压引脚: GPIO%d\n", ADC_PIN_MOTOR, ADC_PIN_CHIP);
 	}
 
-	motorAdcRaw = analogRead(ADC_PIN_MOTOR);
-	chipAdcRaw  = analogRead(ADC_PIN_CHIP);
-
-	motorVoltage = adcToVoltage(motorAdcRaw, ADC_CAL_MOTOR);
-	chipVoltage  = adcToVoltage(chipAdcRaw,  ADC_CAL_CHIP);
-
-	motorFilter.output = motorAdcRaw / 4095.0f * 3.3f;
-	motorFilter.alpha = EMA_ALPHA;
-	motorFilter.update(motorAdcRaw / 4095.0f * 3.3f);
-
-	chipFilter.output = chipAdcRaw / 4095.0f * 3.3f;
-	chipFilter.alpha = EMA_ALPHA;
-	chipFilter.update(chipAdcRaw / 4095.0f * 3.3f);
-
-	print("ADC 电压测量初始化完成\n");
-	print("电机电压引脚: GPIO%d, 芯片电压引脚: GPIO%d\n", ADC_PIN_MOTOR, ADC_PIN_CHIP);
-}
-
-// ====================== ADC 转换函数 ======================
+	// ====================== ADC 转换函数 ======================
 
 /**
  * @brief 将ADC原始值转换为实际电压
@@ -122,7 +114,7 @@ void readVoltages() {
 	chipAdcRaw = analogRead(ADC_PIN_CHIP);
 	float chipMeasured = chipAdcRaw / 4095.0f * 3.3f;
 	float chipFiltered = chipFilter.update(chipMeasured);
-	chipVoltage = chipFiltered * 1 * ADC_CAL_CHIP;
+	chipVoltage = chipFiltered * DIVIDER_RATIO * ADC_CAL_CHIP;
 
 	if (chipVoltage < 0.0f) chipVoltage = 0.0f;
 	if (chipVoltage > 8.0f) chipVoltage = 8.0f;

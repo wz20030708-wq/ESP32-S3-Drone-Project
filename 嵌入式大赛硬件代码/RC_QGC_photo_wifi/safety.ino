@@ -7,7 +7,6 @@
  * 
  * 实现无人机的故障安全保护功能，包括：
  * - RC信号丢失时自动降落
- * - 自动飞行模式下允许飞行员手动接管
  */
 
 /** RC信号丢失超时时间(s) */
@@ -15,8 +14,7 @@
 /** 自动降落时间(s) */
 #define DESCEND_TIME 10
 
-extern float controlTime;
-extern float controlRoll, controlPitch, controlThrottle, controlYaw;
+#include "globals.h"
 
 /**
  * @brief 故障安全主入口
@@ -44,10 +42,10 @@ void rcLossFailsafe() {
 /**
  * @brief 自动降落程序
  * 
- * 切换到AUTO模式，逐步减小油门实现平滑降落。
+ * 切换到STAB模式，逐步减小油门实现平滑降落。
  */
 void descend() {
-	mode = AUTO;
+	mode = STAB;
 	attitudeTarget = Quaternion();
 	thrustTarget -= dt / DESCEND_TIME;
 	if (thrustTarget < 0) {
@@ -62,12 +60,12 @@ void descend() {
  * 检测飞行员的手动输入，在自动飞行模式下允许手动接管控制。
  */
 void autoFailsafe() {
-	static float roll, pitch, yaw, throttle;
-	if (roll != controlRoll || pitch != controlPitch || yaw != controlYaw || abs(throttle - controlThrottle) > 0.05) {
-		if (mode == AUTO) mode = STAB;
+		static float roll, pitch, yaw, throttle;
+		if (roll != controlRoll || pitch != controlPitch || yaw != controlYaw || fabsf(throttle - controlThrottle) > 0.05) {
+			// Pilot input detected - manual control active
+		}
+		roll = controlRoll;
+		pitch = controlPitch;
+		yaw = controlYaw;
+		throttle = controlThrottle;
 	}
-	roll = controlRoll;
-	pitch = controlPitch;
-	yaw = controlYaw;
-	throttle = controlThrottle;
-}

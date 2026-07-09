@@ -13,11 +13,21 @@
 #include "vector.h"
 #include "lpf.h"
 #include "util.h"
+#include "madgwick.h"
 
 /** 加速度计修正权重 */
 float accWeight = 0.003;
 /** 角速度低通滤波器 */
 LowPassFilter<Vector> ratesFilter(0.2);
+
+/** 垂直速度估计值 (m/s, 向上为正) */
+float verticalVelocity = 0;
+/** 气压计高度低通滤波器 */
+LowPassFilter<float> altFilterLPF(0.1);
+/** 滤波后的气压计高度 */
+float altFiltered = 0;
+/** 垂直速度低通滤波器 */
+LowPassFilter<float> velFilter(0.2);
 
 /**
  * @brief 姿态估计主入口
@@ -25,8 +35,21 @@ LowPassFilter<Vector> ratesFilter(0.2);
  * 依次执行陀螺仪积分和加速度计修正。
  */
 void estimate() {
+#ifdef USE_MADGWICK_FILTER
+	// Madgwick AHRS: single-step fusion of gyro and accel
+	estimateGyroBias();
+	Vector gyroCorrected = gyro - gyroBias;
+	madgwickUpdate(attitude, gyroCorrected.x, gyroCorrected.y, gyroCorrected.z, acc.x, acc.y, acc.z, dt);
+	rates = gyroCorrected;
+#else
+	// Original complementary filter approach
+	estimateGyroBias();
 	applyGyro();
 	applyAcc();
+#endif
+	// 垂直速度估计：使用气压计和加速度计融合
+	if (altitudeM > 0) altFiltered = altFilterLPF.update(altitudeM);
+	estimateVerticalVelocity();
 }
 
 /**
@@ -36,8 +59,25 @@ void estimate() {
  * 角速度先经过低通滤波去除高频噪声。
  */
 void applyGyro() {
-	rates = ratesFilter.update(gyro);
+	Vector gyroCorrected = gyro - gyroBias;
+	rates = ratesFilter.update(gyroCorrected);
 	attitude = Quaternion::rotate(attitude, Quaternion::fromRotationVector(rates * dt));
+}
+
+/**
+ * @brief 运行时陀螺仪零偏估计
+ * 在着陆状态下通过EMA缓慢更新零偏，补偿温漂。
+ */
+void estimateGyroBias() {
+	static float landedTime = 0;
+	if (landed && !armed) {
+		landedTime += dt;
+		if (landedTime > 2.0f) {
+			updateGyroBias(gyro);
+		}
+	} else {
+		landedTime = 0;
+	}
 }
 
 /**
@@ -50,15 +90,15 @@ void applyGyro() {
  */
 void applyAcc() {
 	float accNorm = acc.norm();
-	landed = !motorsActive() && abs(accNorm - ONE_G) < ONE_G * 0.1f;
+	landed = !motorsActive() && fabsf(accNorm - ONE_G) < ONE_G * 0.1f;
 
 	bool useFullWeight = landed || thrustTarget < 0.12;
 
 	float correctionWeight = 0;
 	if (useFullWeight) {
 		correctionWeight = accWeight;
-	} else if (abs(accNorm - ONE_G) < ONE_G * 0.3f) {
-		correctionWeight = accWeight * 0.1f;
+	} else if (fabsf(accNorm - ONE_G) < ONE_G * 0.3f) {
+		correctionWeight = accWeight * 0.33f;  // was 0.1f, now ~0.001
 	}
 	if (correctionWeight == 0) return;
 
@@ -74,4 +114,36 @@ void applyAcc() {
 	}
 
 	attitude = Quaternion::rotate(attitude, Quaternion::fromRotationVector(correction));
+}
+
+/**
+ * @brief 垂直速度估计
+ * 
+ * 通过互补滤波融合加速度计积分和气压计高度差分，
+ * 得到平滑的垂直速度估计值。
+ * 仅在气压计数据有效（altFiltered > 0）时运行。
+ */
+void estimateVerticalVelocity() {
+	static float velAcc = 0;
+	static float lastAltFiltered = 0;
+
+	if (altFiltered <= 0) return;
+
+	// 将加速度转换到世界坐标系，提取垂直分量并移除重力
+	Vector accWorld = Quaternion::rotateVector(acc, attitude);
+	float accVertical = accWorld.z - ONE_G;
+
+	// 加速度积分得到速度
+	velAcc += accVertical * dt;
+
+	// 气压计高度差分得到速度
+	float baroVel = (altFiltered - lastAltFiltered) / dt;
+
+	// 互补滤波融合：加速度积分主导，气压计修正漂移
+	velAcc = velAcc * 0.98f + baroVel * 0.02f;
+
+	// 低通滤波输出
+	verticalVelocity = velFilter.update(velAcc);
+
+	lastAltFiltered = altFiltered;
 }

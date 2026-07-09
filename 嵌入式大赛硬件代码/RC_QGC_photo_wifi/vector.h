@@ -91,11 +91,12 @@ public:
 	 * @brief 向量归一化(单位化)
 	 */
 	void normalize() {
-		float n = norm();
-		x /= n;
-		y /= n;
-		z /= n;
-	}
+			float n = norm();
+			if (n == 0) return;
+			x /= n;
+			y /= n;
+			z /= n;
+		}
 
 	/**
 	 * @brief 向量 + 标量(逐轴相加)

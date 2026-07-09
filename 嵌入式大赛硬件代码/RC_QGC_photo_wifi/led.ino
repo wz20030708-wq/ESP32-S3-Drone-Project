@@ -21,11 +21,7 @@
 #define LED_BUILTIN 48
 #endif
 
-extern bool mavlinkConnected;
-extern float controlTime;
-extern float lastMavlinkTime;
-extern float t;
-extern bool armed;
+#include "globals.h"
 
 /**
  * @brief 初始化LED引脚

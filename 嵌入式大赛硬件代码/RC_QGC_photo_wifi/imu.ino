@@ -17,8 +17,7 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 
-/** 飞行控制任务句柄 */
-extern TaskHandle_t flightControlTaskHandle;
+#include "globals.h"
 
 // ====================== IMU SPI 引脚宏定义 =======================
 
@@ -43,6 +42,9 @@ Vector accBias;
 Vector accScale(1, 1, 1);
 /** 陀螺仪零偏 */
 Vector gyroBias;
+
+/** 陀螺仪陷波滤波器（消除电机振动，默认关闭） */
+NotchFilter<Vector> gyroNotchFilter;
 
 /**
  * @brief 初始化IMU模块
@@ -86,6 +88,9 @@ void readIMU() {
     acc = (acc - accBias) / accScale;
     gyro = gyro - gyroBias;
     
+    // Apply notch filter to gyro data (if enabled)
+    gyro = gyroNotchFilter.update(gyro);
+    
     rotateIMU(acc);
     rotateIMU(gyro);
 }
@@ -98,7 +103,9 @@ void readIMU() {
  * @param data 待转换的向量
  */
 void rotateIMU(Vector& data) {
-    data = Vector(data.y, -data.x, data.z);
+    float tmp = data.x;
+    data.x = data.y;
+    data.y = -tmp;
 }
 
 /**
@@ -115,6 +122,14 @@ void calibrateGyroOnce() {
 }
 
 /**
+ * @brief 更新陀螺仪运行时零偏（EMA，仅着陆时调用）
+ * @param gyroRaw 原始陀螺仪读数
+ */
+void updateGyroBias(const Vector& gyroRaw) {
+    gyroBias = gyroBias * 0.99f + gyroRaw * 0.01f;
+}
+
+/**
  * @brief 加速度计六面校准
  * 
  * 挂起飞行控制任务，按六个方向采集数据并计算校准参数。
@@ -125,7 +140,7 @@ void calibrateAccel() {
 	Vector accMax(-INFINITY, -INFINITY, -INFINITY);
 	Vector accMin(INFINITY, INFINITY, INFINITY);
 
-	print("校准陀螺仪加速计Calibrating accelerometer\n");
+	print("校准加速度计 Calibrating accelerometer\n");
 	imu.setAccelRange(imu.ACCEL_RANGE_2G);
 
 	print("1/6 水平放置[8 sec]\n");
@@ -142,7 +157,7 @@ void calibrateAccel() {
 	vTaskDelay(pdMS_TO_TICKS(8000)); calibrateAccelOnce(accMax, accMin);
 
 	printIMUCalibration();
-	print("✓校准完成Calibration done!\n");
+	print("✓ 校准完成 Calibration done!\n");
 	configureIMU();
 
 	vTaskResume(flightControlTaskHandle);

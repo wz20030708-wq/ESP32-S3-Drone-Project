@@ -69,3 +69,79 @@ private:
 	/** 滤波器初始化标志 */
 	bool initialized = false;
 };
+
+/**
+ * @brief 陷波滤波器 (Notch Filter)
+ * 用于消除特定频率的振动噪声（如电机振动）。
+ * 默认为二阶 IIR 陷波滤波器。
+ * 
+ * @tparam T 数据类型（通常为 float 或 Vector）
+ */
+template<typename T>
+class NotchFilter {
+    public:
+        /**
+         * @brief 构造函数
+         * @param freq 陷波中心频率 (Hz)
+         * @param q Q值（带宽 = freq/Q，Q越大带宽越窄）
+         * @param fs 采样频率 (Hz)
+         */
+        NotchFilter(float freq = 0, float q = 5.0f, float fs = 1000.0f) {
+            setParams(freq, q, fs);
+            output = T();
+            input1 = T();
+            input2 = T();
+            output1 = T();
+            output2 = T();
+        }
+        
+        /**
+         * @brief 设置滤波器参数
+         */
+        void setParams(float freq, float q, float fs) {
+            if (freq <= 0 || q <= 0) {
+                enabled = false;
+                return;
+            }
+            float w0 = 2.0f * PI * freq / fs;
+            float alpha = sinf(w0) / (2.0f * q);
+            
+            b0 = 1.0f;
+            b1 = -2.0f * cosf(w0);
+            b2 = 1.0f;
+            a0 = 1.0f + alpha;
+            a1 = -2.0f * cosf(w0);
+            a2 = 1.0f - alpha;
+            
+            // Normalize
+            b0 /= a0; b1 /= a0; b2 /= a0;
+            a1 /= a0; a2 /= a0;
+            
+            enabled = true;
+        }
+        
+        /**
+         * @brief 更新滤波器
+         * @param input 当前输入
+         * @return 滤波后的输出
+         */
+        T update(const T& input) {
+            if (!enabled) return input;
+            
+            output = input * b0 + input1 * b1 + input2 * b2 - output1 * a1 - output2 * a2;
+            
+            input2 = input1;
+            input1 = input;
+            output2 = output1;
+            output1 = output;
+            
+            return output;
+        }
+        
+        /** 是否启用 */
+        bool enabled = false;
+        
+    private:
+        T output, input1, input2, output1, output2;
+        float b0, b1, b2, a0, a1, a2;
+};

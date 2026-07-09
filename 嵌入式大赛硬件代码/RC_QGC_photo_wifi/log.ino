@@ -118,8 +118,7 @@ void printLogData() {
 	int start = logTotal < LOG_SIZE ? 0 : logPointer;
 
 	for (int i = 0; i < count; i++) {
-		int idx = (start + i) % LOG_SIZE;
-		if (logBuffer[idx][0] == 0) continue;
+			int idx = (start + i) % LOG_SIZE;
 		for (int j = 0; j < logColumns; j++) {
 			print("%g%s", logBuffer[idx][j], j < logColumns - 1 ? "," : "\n");
 		}

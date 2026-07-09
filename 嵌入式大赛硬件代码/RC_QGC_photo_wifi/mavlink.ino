@@ -30,12 +30,7 @@ float lastMavlinkTime = 0;
 /** MAVLink打印缓冲区 */
 String mavlinkPrintBuffer;
 
-extern float controlTime;
-extern float controlRoll, controlPitch, controlThrottle, controlYaw, controlMode;
-extern uint16_t channels[16];
-
-extern SemaphoreHandle_t mutexState;
-extern SemaphoreHandle_t mutexSerial;
+#include "globals.h"
 
 int parametersCount();
 const char *getParameterName(int index);
@@ -68,10 +63,10 @@ void sendMavlink() {
 
 	if (slow) {
 		mavlink_msg_heartbeat_pack(SYSTEM_ID, MAV_COMP_ID_AUTOPILOT1, &msg, MAV_TYPE_QUADROTOR, MAV_AUTOPILOT_GENERIC,
-			(armed ? MAV_MODE_FLAG_SAFETY_ARMED : 0) |
-			((mode == STAB) ? MAV_MODE_FLAG_STABILIZE_ENABLED : 0) |
-			((mode == AUTO) ? MAV_MODE_FLAG_AUTO_ENABLED : MAV_MODE_FLAG_MANUAL_INPUT_ENABLED),
-			mode, MAV_STATE_STANDBY);
+				(armed ? MAV_MODE_FLAG_SAFETY_ARMED : 0) |
+				((mode == STAB) ? MAV_MODE_FLAG_STABILIZE_ENABLED : 0) |
+				((mode == OBSTACLE) ? MAV_MODE_FLAG_CUSTOM_MODE_ENABLED : 0),
+				(mode == STAB) ? 0 : 1, MAV_STATE_STANDBY);
 		sendMessage(&msg);
 
 		if (!mavlinkConnected) return;
@@ -226,45 +221,6 @@ void handleMavlink(const void *_msg) {
 		doCommand(data, true);
 	}
 
-	if (msg.msgid == MAVLINK_MSG_ID_SET_ATTITUDE_TARGET) {
-		if (mode != AUTO) return;
-
-		mavlink_set_attitude_target_t m;
-		mavlink_msg_set_attitude_target_decode(&msg, &m);
-		if (m.target_system && m.target_system != SYSTEM_ID) return;
-
-		xSemaphoreTake(mutexState, portMAX_DELAY);
-		ratesTarget.x = m.body_roll_rate;
-		ratesTarget.y = -m.body_pitch_rate;
-		ratesTarget.z = -m.body_yaw_rate;
-		attitudeTarget.w = m.q[0];
-		attitudeTarget.x = m.q[1];
-		attitudeTarget.y = -m.q[2];
-		attitudeTarget.z = -m.q[3];
-		thrustTarget = m.thrust;
-		ratesExtra = Vector(0, 0, 0);
-
-		if (m.type_mask & ATTITUDE_TARGET_TYPEMASK_ATTITUDE_IGNORE) attitudeTarget.invalidate();
-		armed = m.thrust > 0;
-		xSemaphoreGive(mutexState);
-	}
-
-	if (msg.msgid == MAVLINK_MSG_ID_SET_ACTUATOR_CONTROL_TARGET) {
-		if (mode != AUTO) return;
-
-		mavlink_set_actuator_control_target_t m;
-		mavlink_msg_set_actuator_control_target_decode(&msg, &m);
-		if (m.target_system && m.target_system != SYSTEM_ID) return;
-
-		xSemaphoreTake(mutexState, portMAX_DELAY);
-		attitudeTarget.invalidate();
-		ratesTarget.invalidate();
-		torqueTarget.invalidate();
-		memcpy(motors, m.controls, sizeof(motors));
-		armed = motors[0] > 0 || motors[1] > 0 || motors[2] > 0 || motors[3] > 0;
-		xSemaphoreGive(mutexState);
-	}
-
 	if (msg.msgid == MAVLINK_MSG_ID_LOG_REQUEST_DATA) {
 		mavlink_log_request_data_t m;
 		mavlink_msg_log_request_data_decode(&msg, &m);
@@ -301,12 +257,12 @@ void handleMavlink(const void *_msg) {
 		}
 
 		if (m.command == MAV_CMD_DO_SET_MODE) {
-			if (m.param2 < 0 || m.param2 > AUTO) return;
-			accepted = true;
-			xSemaphoreTake(mutexState, portMAX_DELAY);
-			mode = m.param2;
-			xSemaphoreGive(mutexState);
-		}
+				if (m.param2 < 0 || m.param2 > 1) return;
+				accepted = true;
+				xSemaphoreTake(mutexState, portMAX_DELAY);
+				mode = (m.param2 == 0) ? STAB : OBSTACLE;
+				xSemaphoreGive(mutexState);
+			}
 
 		mavlink_message_t ack;
 		mavlink_msg_command_ack_pack(SYSTEM_ID, MAV_COMP_ID_AUTOPILOT1, &ack, m.command, accepted ? MAV_RESULT_ACCEPTED : MAV_RESULT_UNSUPPORTED, UINT8_MAX, 0, msg.sysid, msg.compid);
@@ -328,13 +284,14 @@ void mavlinkPrint(const char* str) {
 void sendMavlinkPrint() {
 	xSemaphoreTake(mutexSerial, portMAX_DELAY);
 	const char *str = mavlinkPrintBuffer.c_str();
-	for (int i = 0; i < strlen(str); i += MAVLINK_MSG_SERIAL_CONTROL_FIELD_DATA_LEN) {
+		int strLen = strlen(str);
+		for (int i = 0; i < strLen; i += MAVLINK_MSG_SERIAL_CONTROL_FIELD_DATA_LEN) {
 		char data[MAVLINK_MSG_SERIAL_CONTROL_FIELD_DATA_LEN + 1];
 		strlcpy(data, str + i, sizeof(data));
 		mavlink_message_t msg;
 		mavlink_msg_serial_control_pack(SYSTEM_ID, MAV_COMP_ID_AUTOPILOT1, &msg,
 			SERIAL_CONTROL_DEV_SHELL,
-			i + MAVLINK_MSG_SERIAL_CONTROL_FIELD_DATA_LEN < strlen(str) ? SERIAL_CONTROL_FLAG_MULTI : 0,
+			i + MAVLINK_MSG_SERIAL_CONTROL_FIELD_DATA_LEN < strLen ? SERIAL_CONTROL_FLAG_MULTI : 0,
 			0, 0, strlen(data), (uint8_t *)data, 0, 0);
 		uint8_t buf[MAVLINK_MAX_PACKET_LEN];
 		int len = mavlink_msg_to_send_buffer(buf, &msg);
