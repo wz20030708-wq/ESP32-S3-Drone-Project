@@ -135,8 +135,6 @@ void updateGyroBias(const Vector& gyroRaw) {
  * 挂起飞行控制任务，按六个方向采集数据并计算校准参数。
  */
 void calibrateAccel() {
-	vTaskSuspend(flightControlTaskHandle);
-
 	Vector accMax(-INFINITY, -INFINITY, -INFINITY);
 	Vector accMin(INFINITY, INFINITY, INFINITY);
 
@@ -144,23 +142,21 @@ void calibrateAccel() {
 	imu.setAccelRange(imu.ACCEL_RANGE_2G);
 
 	print("1/6 水平放置[8 sec]\n");
-	vTaskDelay(pdMS_TO_TICKS(8000)); calibrateAccelOnce(accMax, accMin);
+	pause(8); calibrateAccelOnce(accMax, accMin);
 	print("2/6 机头朝上[8 sec]\n");
-	vTaskDelay(pdMS_TO_TICKS(8000)); calibrateAccelOnce(accMax, accMin);
+	pause(8); calibrateAccelOnce(accMax, accMin);
 	print("3/6 机头朝下[8 sec]\n");
-	vTaskDelay(pdMS_TO_TICKS(8000)); calibrateAccelOnce(accMax, accMin);
+	pause(8); calibrateAccelOnce(accMax, accMin);
 	print("4/6 右侧朝下[8 sec]\n");
-	vTaskDelay(pdMS_TO_TICKS(8000)); calibrateAccelOnce(accMax, accMin);
+	pause(8); calibrateAccelOnce(accMax, accMin);
 	print("5/6 左侧朝下[8 sec]\n");
-	vTaskDelay(pdMS_TO_TICKS(8000)); calibrateAccelOnce(accMax, accMin);
+	pause(8); calibrateAccelOnce(accMax, accMin);
 	print("6/6 倒置放置[8 sec]\n");
-	vTaskDelay(pdMS_TO_TICKS(8000)); calibrateAccelOnce(accMax, accMin);
+	pause(8); calibrateAccelOnce(accMax, accMin);
 
 	printIMUCalibration();
 	print("✓ 校准完成 Calibration done!\n");
 	configureIMU();
-
-	vTaskResume(flightControlTaskHandle);
 }
 
 /**

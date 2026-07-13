@@ -20,6 +20,7 @@
 #include "quaternion.h"
 #include "lpf.h"
 #include "pid.h"
+#include "hover_controller.h"
 
 // ============================================================
 // 来自 RC_QGC_photo_wifi.ino — 主固件文件
@@ -127,6 +128,10 @@ extern float distanceMm;
 extern float altitudeM;
 /** 温度 (°C) */
 extern float temperatureC;
+/** AHT20温湿度传感器是否正常 */
+extern bool aht20Ok;
+/** 湿度值 (%) */
+extern float humidity;
 
 // ============================================================
 // 来自 voltage.ino — ADC电压测量模块
@@ -175,6 +180,38 @@ extern float madgwickBeta;
 
 /** 陀螺仪陷波滤波器 */
 extern NotchFilter<Vector> gyroNotchFilter;
+
+// ============================================================
+// 来自 control.ino — 飞行控制模块 (补充)
+// ============================================================
+
+/** 横滚速率PID控制器 */
+extern PID rollRatePID;
+/** 俯仰速率PID控制器 */
+extern PID pitchRatePID;
+/** 偏航速率PID控制器 */
+extern PID yawRatePID;
+/** 横滚角度PID控制器 */
+extern PID rollPID;
+/** 俯仰角度PID控制器 */
+extern PID pitchPID;
+/** 偏航角度PID控制器 */
+extern PID yawPID;
+
+/** 目标姿态四元数 */
+extern Quaternion attitudeTarget;
+/** 目标角速度 */
+extern Vector ratesTarget;
+/** 目标力矩 */
+extern Vector torqueTarget;
+/** 目标推力 */
+extern float thrustTarget;
+/** 最大角速度限制 */
+extern Vector maxRate;
+/** 最大倾斜角 */
+extern float tiltMax;
+/** 悬停控制器 */
+extern HoverController hoverCtrl;
 
 // ============================================================
 // 来自 mavlink.ino — MAVLink协议通信模块 (WiFi)

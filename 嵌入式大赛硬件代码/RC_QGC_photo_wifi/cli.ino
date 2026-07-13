@@ -46,6 +46,9 @@ const char* motd =
 "time - 显示时间信息\n"
 "wifi - 显示Wi-Fi信息\n"
 "mot - 显示电机输出\n"
+"sensors - 显示传感器数据(气压/温度/海拔/距离/湿度/电压)\n"
+"ctrl - 显示控制状态(目标姿态/角速度/推力/高度/垂直速度)\n"
+"pid - 显示所有PID控制器参数和状态\n"
 "sys - 显示系统信息\n"
 "stab - 切换到自稳模式\n"
 "obstacle - 切换到障碍规避模式\n"
@@ -234,6 +237,99 @@ void doCommand(String str, bool echo = false) {
 		}
 		delete[] systemState;
 #endif
+	} else if (command == "ctrl") {
+		xSemaphoreTake(mutexState, pdMS_TO_TICKS(5));
+		Quaternion _attitudeTarget = attitudeTarget;
+		Vector _ratesTarget = ratesTarget;
+		Vector _torqueTarget = torqueTarget;
+		float _thrustTarget = thrustTarget;
+		float _altFiltered = altFiltered;
+		float _verticalVelocity = verticalVelocity;
+		float _altitudeTarget = altitudeTarget;
+		Vector _rate = rates;
+		Quaternion _att = attitude;
+		int _mode = mode;
+		bool _armed = armed;
+		xSemaphoreGive(mutexState);
+
+		Vector attEuler = _att.toEuler();
+		Vector attTgtEuler = _attitudeTarget.toEuler();
+		print("======= 控制状态 (mode=%s, armed=%d) =======\n", _mode == STAB ? "STAB" : _mode == OBSTACLE ? "HOVER" : "?", _armed);
+		print("姿态: r=%.1f p=%.1f y=%.1f °\n", degrees(attEuler.x), degrees(attEuler.y), degrees(attEuler.z));
+		print("目标姿态: r=%.1f p=%.1f y=%.1f °\n", degrees(attTgtEuler.x), degrees(attTgtEuler.y), degrees(attTgtEuler.z));
+		print("角速度: x=%.2f y=%.2f z=%.2f rad/s\n", _rate.x, _rate.y, _rate.z);
+		print("目标角速度: x=%.2f y=%.2f z=%.2f rad/s\n", _ratesTarget.x, _ratesTarget.y, _ratesTarget.z);
+		print("目标力矩: x=%.4f y=%.4f z=%.4f\n", _torqueTarget.x, _torqueTarget.y, _torqueTarget.z);
+		print("目标推力: %.3f\n", _thrustTarget);
+		print("高度: %.1f m  目标高度: %.1f m\n", _altFiltered, _altitudeTarget);
+		print("垂直速度: %.2f m/s\n", _verticalVelocity);
+		print("=========================\n");
+	} else if (command == "pid") {
+		xSemaphoreTake(mutexState, pdMS_TO_TICKS(5));
+		float rrp = rollRatePID.p, rri = rollRatePID.i, rrd = rollRatePID.d, rrint = rollRatePID.integral, rrder = rollRatePID.derivative;
+		float prp = pitchRatePID.p, pri = pitchRatePID.i, prd = pitchRatePID.d, prInt = pitchRatePID.integral, prder = pitchRatePID.derivative;
+		float yrp = yawRatePID.p, yri = yawRatePID.i, yrd = yawRatePID.d, yrint = yawRatePID.integral, yrder = yawRatePID.derivative;
+		float rp = rollPID.p, ri = rollPID.i, rd = rollPID.d, rint = rollPID.integral, rder = rollPID.derivative;
+		float pp = pitchPID.p, pi = pitchPID.i, pd = pitchPID.d, pint = pitchPID.integral, pder = pitchPID.derivative;
+		float yp = yawPID.p, yi = yawPID.i, yd = yawPID.d, yint = yawPID.integral, yder = yawPID.derivative;
+		float alp = altPosPID.p, ali = altPosPID.i, ald = altPosPID.d, alint = altPosPID.integral, alder = altPosPID.derivative;
+		float avp = altVelPID.p, avi = altVelPID.i, avd = altVelPID.d, avint = altVelPID.integral, avder = altVelPID.derivative;
+		Vector velEst = hoverCtrl.getVelocityEstimate();
+		float vxErr, vyErr, vxInt, vyInt;
+		hoverCtrl.getPIDState(vxErr, vyErr, vxInt, vyInt);
+		xSemaphoreGive(mutexState);
+
+		print("======= PID状态 =======\n");
+		print("--- 角速率环 ---\n");
+		print("RollRate:  P=%.4f I=%.4f D=%.4f int=%.4f der=%.4f\n", rrp, rri, rrd, rrint, rrder);
+		print("PitchRate: P=%.4f I=%.4f D=%.4f int=%.4f der=%.4f\n", prp, pri, prd, prInt, prder);
+		print("YawRate:   P=%.4f I=%.4f D=%.4f int=%.4f der=%.4f\n", yrp, yri, yrd, yrint, yrder);
+		print("--- 角度环 ---\n");
+		print("Roll:      P=%.4f I=%.4f D=%.4f int=%.4f der=%.4f\n", rp, ri, rd, rint, rder);
+		print("Pitch:     P=%.4f I=%.4f D=%.4f int=%.4f der=%.4f\n", pp, pi, pd, pint, pder);
+		print("Yaw:       P=%.4f I=%.4f D=%.4f int=%.4f der=%.4f\n", yp, yi, yd, yint, yder);
+		print("--- 高度环 ---\n");
+		print("AltPos:    P=%.4f I=%.4f D=%.4f int=%.4f der=%.4f\n", alp, ali, ald, alint, alder);
+		print("AltVel:    P=%.4f I=%.4f D=%.4f int=%.4f der=%.4f\n", avp, avi, avd, avint, avder);
+		print("--- 悬停速度环 ---\n");
+		print("HoverVel:  velEst=(%.3f, %.3f) err=(%.3f, %.3f) int=(%.4f, %.4f)\n",
+			velEst.x, velEst.y, vxErr, vyErr, vxInt, vyInt);
+		print("=========================\n");
+	} else if (command == "sensors") {
+		xSemaphoreTake(mutexState, pdMS_TO_TICKS(5));
+		float _motorVoltage = motorVoltage;
+		float _chipVoltage = chipVoltage;
+		float _pressureHpa = pressureHpa;
+		float _temperatureC = temperatureC;
+		float _altitudeM = altitudeM;
+		float _distanceMm = distanceMm;
+		float _humidity = humidity;
+		bool _pm280Ok = pm280Ok;
+		bool _vl53l0xOk = vl53l0xOk;
+		bool _aht20Ok = aht20Ok;
+		xSemaphoreGive(mutexState);
+
+		print("======= 传感器数据 =======\n");
+		if (_pm280Ok) {
+			print("气压: %.1f hPa\n", _pressureHpa);
+			print("温度: %.1f °C\n", _temperatureC);
+			print("海拔: %.1f m\n", _altitudeM);
+		} else {
+			print("PM280: 未连接\n");
+		}
+		if (_vl53l0xOk) {
+			print("激光距离: %.0f mm\n", _distanceMm);
+		} else {
+			print("VL53L0X: 未连接\n");
+		}
+		if (_aht20Ok) {
+			print("湿度: %.1f %%\n", _humidity);
+		} else {
+			print("AHT20: 未连接\n");
+		}
+		print("电机电压: %.2f V\n", _motorVoltage);
+		print("芯片电压: %.2f V\n", _chipVoltage);
+		print("=========================\n");
 	} else if (command == "reset") {
 		xSemaphoreTake(mutexState, portMAX_DELAY);
 		attitude = Quaternion();

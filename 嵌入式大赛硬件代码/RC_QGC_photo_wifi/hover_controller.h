@@ -1,6 +1,6 @@
 /**
  * @file hover_controller.h
- * @brief 
+ * @brief 专业级联悬停控制器（参考大疆 P 模式 / Crazyflie / PX4 架构）
  * @date 2026
  * @version 3.0
  *
@@ -45,7 +45,7 @@
 
 /**
  * @class HoverController
- * @brief 悬停模式级联控制器
+ * @brief 悬停模式级联控制器（大疆 P 模式风格）
  *
  * 封装水平速度估计 + 速度PID + 倾角限幅。
  * 输入：加速度（机体系）、当前姿态、dt、目标水平速度（世界系）
@@ -93,7 +93,7 @@ public:
 	}
 
 	/**
-	 * @brief 更新悬停控制
+	 * @brief 更新悬停控制（大疆 P 模式风格）
 	 * @param accBody 机体系加速度 (m/s²)
 	 * @param attitude 当前姿态四元数
 	 * @param dt 时间步长 (s)

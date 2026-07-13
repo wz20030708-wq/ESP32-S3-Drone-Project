@@ -37,6 +37,8 @@
 #define PM280_ALT_ADDR 0x77
 /** VL53L0X固定地址 */
 #define VL53L0X_ADDR  0x29
+/** AHT20温湿度传感器地址 */
+#define AHT20_ADDR    0x38
 
 // ====================== 传感器状态标志 ======================
 
@@ -44,6 +46,8 @@
 bool pm280Ok    = false;
 /** VL53L0X初始化成功标志 */
 bool vl53l0xOk  = false;
+/** AHT20温湿度传感器是否正常 */
+bool aht20Ok    = false;
 
 /** VL53L0X库对象 */
 VL53L0X vl53l0x;
@@ -58,6 +62,8 @@ float distanceMm  = 0.0f;
 float altitudeM   = 0.0f;
 /** PM280温度(°C) */
 float temperatureC = 0.0f;
+/** 湿度值(%) */
+float humidity = 0.0f;
 
 /** 海平面参考气压(hPa) */
 #define SEA_LEVEL_PRESSURE 1010.25f
@@ -291,6 +297,69 @@ float vl53l0xReadDistance() {
 	return (float)dist;
 }
 
+// ====================== AHT20 温湿度传感器 ======================
+
+/**
+ * @brief AHT20传感器初始化
+ * @return true表示初始化成功，false表示失败
+ */
+bool aht20Init() {
+	Wire.beginTransmission(AHT20_ADDR);
+	if (Wire.endTransmission() != 0) {
+		print("AHT20: I2C 无应答 (硬件未检测到)\n");
+		return false;
+	}
+
+	uint8_t status = i2cRead8(AHT20_ADDR, 0x71);
+	if (!(status & 0x08)) {
+		print("AHT20: 校准位未置位, 发送初始化命令...\n");
+		Wire.beginTransmission(AHT20_ADDR);
+		Wire.write(0xBE);
+		Wire.write(0x08);
+		Wire.endTransmission();
+		delay(10);
+	}
+
+	print("AHT20: 初始化成功\n");
+	return true;
+}
+
+/**
+ * @brief 读取AHT20温湿度数据
+ */
+void aht20Read() {
+	Wire.beginTransmission(AHT20_ADDR);
+	Wire.write(0xAC);
+	Wire.write(0x33);
+	Wire.write(0x00);
+	Wire.endTransmission();
+
+	delay(80);
+
+	Wire.requestFrom(AHT20_ADDR, (uint8_t)6);
+	if (Wire.available() < 6) {
+		print("AHT20: 读取数据失败 (字节数不足)\n");
+		return;
+	}
+
+	uint8_t buf[6];
+	for (uint8_t i = 0; i < 6; i++) {
+		buf[i] = Wire.read();
+	}
+
+	uint8_t status = buf[0];
+	if (status & 0x80) {
+		print("AHT20: 传感器忙\n");
+		return;
+	}
+
+	uint32_t rawH = ((uint32_t)buf[1] << 12) | ((uint32_t)buf[2] << 4) | (buf[3] >> 4);
+	uint32_t rawT = ((uint32_t)(buf[3] & 0x0F) << 16) | ((uint32_t)buf[4] << 8) | buf[5];
+
+	humidity = (rawH * 100.0f) / 0x100000;
+	temperatureC = (rawT * 200.0f / 0x100000) - 50;
+}
+
 // ====================== 统一传感器接口 ======================
 
 /**
@@ -305,6 +374,7 @@ void setupSensors() {
 
 	vl53l0xOk = vl53l0xInit();
 	pm280Ok = pm280Init();
+	aht20Ok = aht20Init();
 
 	print("I2C 扫描: ");
 	for (uint8_t addr = 1; addr < 127; addr++) {
@@ -317,7 +387,8 @@ void setupSensors() {
 
 	if (pm280Ok)   print("PM280:    气压传感器就绪\n");
 	if (vl53l0xOk) print("VL53L0X:  激光测距传感器就绪\n");
-	if (!pm280Ok && !vl53l0xOk) print("警告: 未检测到任何 I2C 传感器\n");
+	if (aht20Ok)   print("AHT20:    温湿度传感器就绪\n");
+	if (!pm280Ok && !vl53l0xOk && !aht20Ok) print("警告: 未检测到任何 I2C 传感器\n");
 }
 
 /**
@@ -336,6 +407,10 @@ void readSensors() {
 		float d = vl53l0xReadDistance();
 		if (d >= 0) distanceMm = d;
 	}
+
+	if (aht20Ok) {
+		aht20Read();
+	}
 }
 
 /**
@@ -351,5 +426,10 @@ void printSensors() {
 		print("距离: %.0f mm\n", distanceMm);
 	} else {
 		print("距离: 未连接\n");
+	}
+	if (aht20Ok) {
+		print("湿度: %.1f %%  温度(AHT20): %.1f °C\n", humidity, temperatureC);
+	} else {
+		print("湿度: 未连接\n");
 	}
 }

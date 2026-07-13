@@ -20,9 +20,9 @@
 #include "globals.h"
 
 /** Wi-Fi热点名称 */
-#define WIFI_SSID "配置网络名称"
+#define WIFI_SSID "TP-LINK_64AE"
 /** Wi-Fi密码 */
-#define WIFI_PASSWORD "配置网络密码"
+#define WIFI_PASSWORD "fdc65tkr"
 
 /** 静态IP地址 */
 #define WIFI_STATIC_IP      "192.168.1.100"
@@ -119,7 +119,7 @@ var btn=document.getElementById('rotBtn');
 btn.textContent=camRot+' deg';
 }
 
-var _d={m0:'',m1:'',m2:'',m3:'',conn:null,clients:'',mv:'',cv:'',press:'',alt:'',dist:'',temp:'',hum:'',pOk:null,vOk:null,mode:'',armed:null,cpu:''};
+var _d={m0:'',m1:'',m2:'',m3:'',conn:null,clients:'',mv:'',cv:'',press:'',alt:'',dist:'',temp:'',hum:'',pOk:null,vOk:null,aOk:null,mode:'',armed:null,cpu:''};
 function update(){
 fetch('/data').then(r=>r.json()).then(d=>{
 var v;
@@ -140,9 +140,10 @@ if(d.pOk!=_d.pOk||d.alt.toFixed(1)!=_d.alt){v=d.pOk?d.alt.toFixed(1):'- -';
  var aEl=document.getElementById('alt');aEl.textContent=v;_d.alt=v;}
 if(d.vOk!=_d.vOk||d.dist!=_d.dist){v=d.vOk?d.dist:'- -';
  var dEl=document.getElementById('dist');dEl.textContent=v;_d.dist=v;_d.vOk=d.vOk;}
-if(d.pOk!=_d.pOk||d.temp.toFixed(1)!=_d.temp){v=d.pOk?d.temp.toFixed(1):'- -';
- var tEl=document.getElementById('temp');tEl.textContent=v;_d.temp=v;}
-if(!_d.hum){document.getElementById('hum').textContent='63';_d.hum='63';}
+if(d.aOk!=_d.aOk||d.temp.toFixed(1)!=_d.temp){v=d.aOk?d.temp.toFixed(1):'- -';
+ var tEl=document.getElementById('temp');tEl.textContent=v;_d.temp=v;_d.aOk=d.aOk;}
+if(d.aOk!=_d.aOk||d.hum.toFixed(1)!=_d.hum){v=d.aOk?d.hum.toFixed(1):'- -';
+ var hEl=document.getElementById('hum');hEl.textContent=v;_d.hum=v;_d.aOk=d.aOk;}
 var modes=['STAB','OBSTACLE'];v=modes[d.mode]||'?';
 if(v!=_d.mode){document.getElementById('mode').textContent=v;_d.mode=v;}
 if(d.armed!=_d.armed){var aEl2=document.getElementById('armed');_d.armed=d.armed;
@@ -250,8 +251,8 @@ void handleData() {
   bool conn;
   int clients;
   float mv, cv;
-  float press, alt, dist, temp;
-  bool pOk, vOk;
+  float press, alt, dist, temp, hum;
+  bool pOk, vOk, aOk;
   int _mode;
   bool _armed;
 
@@ -268,8 +269,10 @@ void handleData() {
   alt = altitudeM;
   dist = distanceMm;
   temp = temperatureC;
+  hum = humidity;
   pOk = pm280Ok;
   vOk = vl53l0xOk;
+  aOk = aht20Ok;
   _mode = mode;
   _armed = armed;
   xSemaphoreGive(mutexState);
@@ -287,8 +290,10 @@ void handleData() {
   json += "\"alt\":" + String(alt, 1) + ",";
   json += "\"dist\":" + String(dist, 0) + ",";
   json += "\"temp\":" + String(temp, 1) + ",";
+  json += "\"hum\":" + String(hum, 1) + ",";
   json += "\"pOk\":" + String(pOk ? "true" : "false") + ",";
   json += "\"vOk\":" + String(vOk ? "true" : "false") + ",";
+  json += "\"aOk\":" + String(aOk ? "true" : "false") + ",";
   json += "\"mode\":" + String(_mode) + ",";
   json += "\"armed\":" + String(_armed ? "true" : "false");
   json += ",\"cpu\":" + String(cpuUsagePercent, 1);
