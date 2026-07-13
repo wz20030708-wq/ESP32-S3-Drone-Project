@@ -1,378 +1,454 @@
-# ESP32 Mini Drone - RC QGC Photo WiFi
+# ESP32-S3 四旋翼无人机完整解决方案（飞控固件 + UniApp 移动端上位机）
 
-基于 ESP32S3-EYE 的迷你无人机飞行控制系统，支持 RC 遥控、QGC 地面站、Wi-Fi 实时监控和摄像头拍照功能。
+## 目录总览
+1. 🚁 Flix 飞控 — ESP32-S3 四旋翼无人机固件
+2. 📱 ESP32Fly — ESP32-S3 无人机移动端上位机APP
+3. 整机联动交互说明（飞控+APP配合流程）
 
-## ✨ 功能特性
+---
 
-### 飞行控制
-- **级联 PID 控制**：角度外环 → 角速度内环 → 电机输出
-- **四元数姿态估计**：陀螺仪积分 + 加速度计修正，避免万向节锁死
-- **多种飞行模式**：RAW（直驱）、ACRO（特技）、STAB（自稳）、AUTO（自动）、OBSTACLE（避障）
-- **故障安全保护**：RC 信号丢失自动降落、自动飞行模式手动接管
+# 第一部分 🚁 Flix 飞控 — ESP32-S3 四旋翼无人机固件
+**基于 FreeRTOS 双核多任务架构完整四旋翼飞行控制系统**
 
-### 传感器
-- **MPU5600 IMU**：6轴陀螺仪/加速度计，支持自动校准
-- **PM280 气压计**：高度测量，量程 300~1100 hPa
-- **VL53L0X 距离传感器**：TOF 测距，量程 30~2000 mm
-- **电压监测**：电机电源和芯片供电电压
+| 标签标识 | 内容 |
+| ---- | ---- |
+| MCU | ESP32-S3 |
+| 开发框架 | Arduino |
+| 实时系统 | FreeRTOS |
+| 地面站协议 | MAVLink |
 
-### 通信
-- **SBUS RC 接收**：支持自动通道校准
-- **Wi-Fi STA 模式**：连接路由器，支持静态 IP 配置
-- **MAVLink 协议**：与 QGC 地面站通信，支持参数管理、姿态显示、解锁/上锁
-- **Web 实时监控**：实时摄像头画面、传感器数据、电机状态
+[🧬 项目概述](#1-1-项目概述) • [📦 硬件引脚](#1-2-硬件引脚定义) • [🏗️ 系统架构](#1-3-系统架构) • [🎮 飞行控制](#1-4-飞行控制) • [📡 通信方式](#1-5-通信方式) • [🔧 构建指南](#1-6-构建指南) • [⚙️ 使用说明](#1-7-使用说明)
 
-### 摄像头
-- **OV3660 摄像头**：8位并行接口，支持 JPEG 图像捕获
-- **QQVGA 分辨率**：160×120，支持实时预览
+## 1.1 项目概述
+Flix 飞控是基于 ESP32-S3 的四旋翼无人机固件，覆盖专业飞控全部核心能力：
 
-## 🛠️ 硬件要求
+| 功能模块 | 详细说明 |
+| ---- | ---- |
+| 姿态估计 | 互补滤波 / Madgwick AHRS 双算法可切换 |
+| 控制架构 | 四层级联PID：位置→速度→姿态角→角速度 |
+| 飞行模式 | 增稳模式(STAB)、悬停模式(HOVER) |
+| 遥控接收 | SBUS接收机，支持自动通道校准 |
+| 地面站对接 | MAVLink over UDP，兼容QGroundControl |
+| 图传系统 | OV3660摄像头，JPEG网页实时预览 |
+| 传感器组 | MPU6500九轴IMU + BMP280气压计 + VL53L0X激光测距 |
+| 数据记录 | RAM环形日志，100Hz采样，循环存储10秒飞行数据 |
+| 故障保护 | RC遥控信号丢失自动平缓降落 |
+| 参数管理 | NVS闪存持久化，飞行中在线调参 |
 
-| 组件 | 型号 | 说明 |
-|------|------|------|
-| 主控芯片 | ESP32S3-EYE | 集成 OV3660 摄像头 |
-| IMU | MPU5600 | I2C 接口，地址 0x68 |
-| 气压计 | PM280 | I2C 接口，地址 0x76 |
-| 距离传感器 | VL53L0X | I2C 接口，地址 0x29 |
-| RC 接收器 | SBUS 协议 | UART2 接口，RX=14 |
-| 电机驱动 | MOSFET/ESC | LEDC PWM 输出 |
-| 电机 | 直流/无刷电机 | 4 个 |
+## 1.2 硬件引脚定义
+### 1.2.1 SPI总线 - MPU9250 IMU
+| 信号 | GPIO | 功能说明 |
+| ---- | ---- | ---- |
+| SCK | 38 | SPI时钟 |
+| MISO | 36 | SPI输入 |
+| MOSI | 37 | SPI输出 |
+| CS | 35 | 片选引脚 |
 
-### 引脚分配
+### 1.2.2 I2C总线（400kHz Fast Mode）
+挂载设备：BMP280(0x76)、VL53L0X(0x29)
+| 信号 | GPIO | 功能说明 |
+| ---- | ---- | ---- |
+| SDA | 47 | I2C数据 |
+| SCL | 21 | I2C时钟 |
 
-| 功能 | 引脚 |
-|------|------|
-| 电机 0（后左） | 41 |
-| 电机 1（后右） | 40 |
-| 电机 2（前右） | 39 |
-| 电机 3（前左） | 42 |
-| SBUS RX | 14 |
-| I2C SDA | 8 |
-| I2C SCL | 9 |
-| 电池电压 ADC | 12 |
-| 芯片电压 ADC | 13 |
+### 1.2.3 电机PWM输出（LEDC驱动）
+| 电机编号 | GPIO | 机身位置 |
+| ---- | ---- | ---- |
+| M0 | 41 | 后左 |
+| M1 | 40 | 后右 |
+| M2 | 39 | 前右 |
+| M3 | 42 | 前左 |
+- 直流有刷MOS驱动：20kHz，10位分辨率
+- 无刷ESC驱动备选：400Hz，16位分辨率
 
-## 📦 软件安装
+### 1.2.4 OV3660摄像头（ESP32S3-EYE标准并行接口）
+| 信号 | GPIO | 信号 | GPIO |
+| ---- | ---- | ---- | ---- |
+| PCLK | 13 | VSYNC | 6 |
+| HREF | 7 | XCLK | 15 |
+| SDA | 4 | SCL | 5 |
+| D0~D3 | 11,9,8,10 | D4~D7 | 12,18,17,16 |
 
-### 环境要求
-- Arduino IDE 或 PlatformIO
-- ESP32 Arduino 核心
-- ESP32 Camera 库
+### 1.2.5 其余外设引脚
+| 外设功能 | GPIO | 参数说明 |
+| ---- | ---- | ---- |
+| SBUS遥控接收 | 14(UART2 RX) | SBUS协议 |
+| 电机电压检测 | 1(ADC1_CH0) | 12位ADC，11dB衰减 |
+| 芯片供电电压检测 | 2(ADC1_CH1) | 12位ADC，11dB衰减 |
+| 板载状态LED | 48 | 运行状态指示灯 |
 
-### 安装步骤
+## 1.3 系统架构
+### 1.3.1 FreeRTOS双核三任务调度（ESP32-S3双核）
+| 任务名称 | 运行核心 | 优先级 | 栈大小 | 运行频率 | 核心职责 |
+| ---- | ---- | ---- | ---- | ---- | ---- |
+| FlightCtrl 飞控主任务 | Core1 | 24（最高） | 8KB | ~1kHz | IMU读取、RC解析、姿态解算、PID控制、电机输出 |
+| CommTask 通信任务 | Core0 | 5（中等） | 8KB | ~200Hz | 串口CLI、Web服务、MAVLink地面站通信 |
+| BgTask 后台任务 | Core0 | 1（最低） | 4KB | ~100Hz | 电压采集、辅助传感器、摄像头、日志、LED、参数同步 |
 
-1. **克隆项目**
-   ```bash
-   git clone https://github.com/your-repo/esp32-mini-drone.git
-   cd esp32-mini-drone
-   ```
-
-2. **安装依赖库**
-   - `SBUS` - RC 信号接收
-   - `MAVLink` - 地面站通信
-   - `Preferences` - 参数存储
-   - `ESP32 Camera` - 摄像头驱动
-
-3. **配置 Wi-Fi**
-   编辑 `wifi.ino`，设置 SSID 和密码：
-   ```cpp
-   #define WIFI_SSID "your-ssid"
-   #define WIFI_PASSWORD "your-password"
-   ```
-
-4. **上传固件**
-   - 选择开发板：`ESP32S3 Dev Module`
-   - 上传速度：`921600`
-   - 分区方案：`Default 4MB with spiffs (1.2MB APP/1.5MB SPIFFS)`
-
-## 🚀 使用方法
-
-### 首次启动
-
-1. **硬件连接**：确保所有传感器和电机连接正确
-2. **串口通信**：打开串口监视器，波特率 `115200`
-3. **校准流程**：
-   ```
-   > ca    # 校准加速度计（保持无人机水平静止）
-   > cr    # 校准 RC 遥控（按提示操作摇杆）
-   ```
-
-### 命令行界面
-
+### 1.3.2 项目文件分层结构
 ```
-help    - 显示帮助
-p       - 显示所有参数
-p <name> <value> - 设置参数
-preset  - 重置参数
-arm     - 解锁无人机
-disarm  - 锁定无人机
-ps      - 显示姿态（欧拉角）
-psq     - 显示姿态（四元数）
-imu     - 显示 IMU 数据
-rc      - 显示 RC 数据
-mot     - 显示电机输出
-sys     - 显示系统信息
-time    - 显示时间信息
-wifi    - 显示 Wi-Fi 信息
-raw/stab/acro/auto/obstacle - 切换飞行模式
-mfr/mfl/mrr/mrl - 测试单个电机
-log [dump] - 查看日志
-reboot  - 重启无人机
-```
-
-### Web 监控
-
-连接无人机 Wi-Fi 后，在浏览器中访问：
-```
-http://........
+RC_QGC_photo_wifi/
+├── RC_QGC_photo_wifi.ino        # 程序入口：初始化、任务创建、CPU监控
+├── globals.h                    # 全局变量声明
+│
+├─ 飞行控制模块
+│   ├── control.ino    四级PID控制、电机混控、悬停算法
+│   ├── estimate.ino   互补滤波/Madgwick姿态解算
+│   ├── motors.ino     四路PWM电机驱动
+│   ├── imu.ino        MPU6500 SPI驱动
+│   ├── rc.ino         SBUS遥控解析、通道校准
+│   ├── sensors.ino    I2C气压计+激光测距
+│   ├── safety.ino     失控保护逻辑
+│   └── time.ino       全局计时、循环频率统计
+│
+├─ 通信模块
+│   ├── wifi.ino       WiFi STA/AP、UDP、网页监控
+│   ├── mavlink.ino    MAVLink v2 地面站协议
+│   └── cli.ino        串口调试命令行
+│
+├─ 外设驱动模块
+│   ├── camera.ino     OV3660图传驱动
+│   ├── led.ino        状态灯控制
+│   └── voltage.ino    ADC电压采集
+│
+├─ 数据存储模块
+│   ├── parameters.ino NVS闪存参数持久化
+│   └── log.ino        环形飞行日志
+│
+└─ 数学算法库
+    ├── vector.h       三维向量运算
+    ├── quaternion.h   四元数旋转
+    ├── pid.h          PID控制器封装
+    ├── lpf.h          低通/陷波滤波器
+    ├── madgwick.h     Madgwick AHRS算法
+    ├── hover_controller.h 级联悬停控制器
+    └── util.h         通用工具函数
 ```
 
-监控页面包含：
-- 摄像头实时画面
-- 电机电源电压和芯片电压
-- 气压、海拔高度、距离、温度
-- 电机占空比实时显示
+## 1.4 飞行控制逻辑
+### 1.4.1 四层级联PID控制链路
+`摇杆指令 → 位置P环 → 速度PID环 → 姿态角PID环 → 角速度PID环 → 电机混控输出`
 
-### QGC 地面站
+| 控制层级 | 控制器类型 | 控制轴数量 | 作用 |
+| ---- | ---- | ---- | ---- |
+| 位置环 | 单P | 2轴（水平XY） | 定点水平位置控制 |
+| 速度环 | PID | 2轴（水平XY） | 水平速度稳定，支持加速度前馈 |
+| 姿态角环 | PID | 3轴（横滚/俯仰/偏航） | 保持机身水平姿态 |
+| 角速度环 | PID | 3轴（横滚/俯仰/偏航） | 高速角速度稳定，抑制抖动 |
 
-1. 打开 QGroundControl
-2. 添加 UDP 连接：端口 `14550`
-3. 等待无人机连接（蓝色心跳图标）
-4. 功能：
-   - 实时姿态显示
-   - 参数管理（调参）
-   - 解锁/上锁
-   - 飞行模式切换
+### 1.4.2 两种飞行模式
+1. **STAB 增稳模式**
+    - 横滚/俯仰摇杆：直接输出目标姿态角（±30°）
+    - 偏航摇杆：控制机身旋转角速度
+    - 松开摇杆自动回平
+2. **HOVER 悬停模式**
+    - 横滚/俯仰摇杆：控制水平飞行速度（最大1.5m/s）
+    - 油门居中自动定高；油门偏移控制垂直速度（最大1.0m/s）
+    - 偏航摇杆控制旋转角速度，松杆自动定点悬停
 
-## 📁 项目结构
+### 1.4.3 姿态解算算法
+- **默认：互补滤波**：陀螺仪积分姿态 + 加速度计重力向量修正，飞行时自动降低修正权重，避免机动干扰
+- **可选：Madgwick AHRS**：梯度下降六轴融合，开启宏 `#define USE_MADGWICK_FILTER` 启用
 
+### 1.4.4 安全保护机制
+1. 低油门积分清零：油门输出＜0.12时清空PID积分，防止积分饱和
+2. RC信号丢失保护：1秒无遥控信号触发自动降落，10秒平滑减速落地
+3. 电压跌落防复位：关闭芯片BrownOut复位功能
+4. 模式切换防抖：连续3次采样确认才切换飞行模式
+5. 数值校验：全链路过滤NAN/INF非法数据，防止飞控失控
+
+## 1.5 通信交互方式
+### 1.5.1 Web网页监控（默认地址：192.168.1.100）
+页面功能：
+- OV3660实时视频流（150ms刷新）
+- 实时姿态、高度、电池电压、CPU占用展示
+- 四路电机输出可视化进度条
+- 整机运行状态仪表盘
+
+### 1.5.2 MAVLink UDP地面站（端口14550，适配QGroundControl）
+- 实时姿态、高度、速度数据上报
+- 飞行PID参数在线读写调参
+- 飞行器解锁/上锁、飞行模式远程切换
+
+### 1.5.3 串口CLI调试（波特率115200）
+常用调试命令：
+
+| 命令 | 功能 |
+| ---- | ---- |
+| help | 查看全部命令说明 |
+| info | 整机运行状态总览 |
+| calib_acc | 加速度计六面校准（约48秒） |
+| calib_gyro | 陀螺仪零偏校准 |
+| param list | 打印全部存储参数 |
+| param set [name] [val] | 在线修改PID/控制参数 |
+| log dump | 导出环形飞行日志 |
+| motor test n | 单独测试指定电机 |
+| reboot | 飞控重启 |
+
+## 1.6 构建编译指南
+### 1.6.1 硬件清单
+| 器件 | 型号 | 数量 |
+| ---- | ---- | ---- |
+| 主控 | ESP32-S3开发板 | 1 |
+| IMU | MPU6500 SPI版本 | 1 |
+| 气压计 | BMP280 I2C | 1 |
+| 激光测距 | VL53L0X | 1 |
+| 摄像头 | OV3660 | 1 |
+| 动力 | 直流有刷电机/无刷电机+ESC ×4 | 4 |
+| 遥控接收机 | SBUS协议接收机 | 1 |
+
+### 1.6.2 依赖库列表
+| 库名称 | 用途 | 安装渠道 |
+| ---- | ---- | ---- |
+| FlixPeriph | MPU6500 SPI驱动 | Arduino库管理器 |
+| SBUS | SBUS遥控协议解析 | Arduino库管理器 |
+| MAVLink | MAVLink v2协议栈 | Arduino库管理器 |
+| VL53L0X | 激光测距传感器驱动 | Arduino库管理器 |
+| esp_camera | OV3660摄像头 | ESP32 Arduino内置 |
+| WiFi/WebServer/WiFiUdp | 无线网络通信 | ESP32 Arduino内置 |
+| SPI/Wire | 总线驱动 | ESP32 Arduino内置 |
+| Preferences | NVS闪存存储 | ESP32 Arduino内置 |
+
+### 1.6.3 编译配置
+#### Arduino IDE编译步骤
+1. 安装ESP32 Arduino Core（版本≥2.0.x）
+2. 库管理器安装全部第三方依赖库
+3. 开发板选择：ESP32S3 Dev Module
+4. PSRAM配置：OPI PSRAM
+5. 编译上传固件
+
+#### PlatformIO 配置模板
+```ini
+[env:esp32-s3-dev]
+platform = espressif32
+board = esp32-s3-devkitc-1
+framework = arduino
+lib_deps =
+    FlixPeriph
+    SBUS
+    MAVLink
+    VL53L0X
+board_build.arduino.memory_type = qio_opi
 ```
-.
-├── RC_QGC_photo_wifi.ino    # 主入口，FreeRTOS 任务创建
-├── control.ino              # 级联 PID 控制和电机混合
-├── estimate.ino             # 四元数姿态估计
-├── safety.ino               # 故障安全保护
-├── imu.ino                  # MPU9250 IMU 驱动和校准
-├── sensors.ino              # PM280 和 VL53L0X 驱动
-├── voltage.ino              # ADC 电压测量
-├── motors.ino               # LEDC PWM 电机驱动
-├── rc.ino                   # SBUS RC 接收和校准
-├── camera.ino               # OV3660 摄像头驱动
-├── wifi.ino                 # Wi-Fi 和 Web 服务器
-├── mavlink.ino              # MAVLink 协议通信
-├── cli.ino                  # 命令行界面
-├── log.ino                  # RAM 日志记录
-├── led.ino                  # LED 状态指示
-├── time.ino                 # 时间管理
-├── parameters.ino           # 参数存储
-├── vector.h                 # 3D 向量类
-├── quaternion.h             # 四元数类
-├── pid.h                    # PID 控制器
-├── lpf.h                    # 低通滤波器
-└── util.h                   # 工具函数
+
+#### 全局编译宏配置（文件头部）
+| 宏定义 | 默认值 | 作用 |
+| ---- | ---- | ---- |
+| WIFI_ENABLED | 1 | 开启WiFi、MAVLink、网页图传 |
+| CAMERA_ENABLED | 1 | 启用OV3660摄像头图传 |
+| USE_MADGWICK_FILTER | 未定义 | 启用Madgwick姿态解算算法 |
+
+## 1.7 使用操作流程
+1. **硬件接线**：严格按照引脚定义连接所有传感器、电机、遥控、摄像头
+2. **固件烧录**：完成编译并上传至ESP32-S3主控
+3. **上电初始化**：板载LED快速闪烁代表硬件初始化运行中
+4. **传感器校准**：串口CLI输入`calib_acc`执行加速度计六面校准
+5. **地面站连接**：QGroundControl自动识别`192.168.1.100:14550`设备
+6. **试飞操作**：解锁飞行器→缓慢推油门离地起飞
+
+### 参数与WiFi配置
+1. PID在线调参示例（串口/MAVLink通用）
+```
+param set roll_rate_p 0.15
+param set roll_rate_i 0.01
+param set roll_rate_d 0.002
+param list
+```
+2. WiFi参数配置（wifi.ino）
+```cpp
+#define WIFI_SSID      "你的WiFi名称"
+#define WIFI_PASSWORD  "你的WiFi密码"
+#define WIFI_STATIC_IP "192.168.1.100"
 ```
 
-## 🎛️ 飞行模式说明
+---
 
-| 模式 | 说明 | 适用场景 |
-|------|------|----------|
-| RAW | 电机直驱，无控制 | 测试电机 |
-| ACRO | 角速度控制 | 特技飞行 |
-| STAB | 自稳模式，角度控制 | 日常飞行 |
-| AUTO | 自动模式，地面站控制 | 自主飞行 |
-| OBSTACLE | 避障模式 | 避障飞行 |
+# 第二部分 📱 ESP32Fly — ESP32-S3 无人机移动端上位机APP
+基于 uni-app(Vue3) 跨平台移动端APP，配套Flix飞控使用，网页图传显示+AI视觉物体检测一体化上位机
 
-## 🔧 主要参数
+[功能特性](#2-1-功能特性) • [技术栈](#2-2-技术栈) • [项目结构](#2-3-项目结构) • [快速部署](#2-4-快速开始) • [页面说明](#2-5-页面详情) • [核心模块](#2-6-核心模块详解) • [权限与设计](#2-7-权限/设计特点) • [常见问题](#2-8-故障排查)
 
-### PID 参数
-- `CTL_R_RATE_P/I/D` - 横滚角速度 PID
-- `CTL_P_RATE_P/I/D` - 俯仰角速度 PID
-- `CTL_Y_RATE_P/I/D` - 偏航角速度 PID
-- `CTL_R_P/I/D` - 横滚角度 PID
-- `CTL_P_P/I/D` - 俯仰角度 PID
+## 2.1 功能特性
+1. **实时无人机视频流**：WebView加载飞控HTTP网页图传，实时查看飞行画面
+2. **阿里云AI物体检测**：DetectObject视觉API，4种检测模式切换
+   - 全部物体 / 人物 / 车辆 / 动物
+   - 画面自动绘制红色标注框+类别+置信度
+3. **自动截图存储**：每5秒自动截取画面，本地持久保存
+4. 截图管理：预览缩放、批量删除、批量保存至手机相册
+5. 全页面强制横屏，深色飞行主题UI
+6. 加密算法纯JS手写实现，无第三方依赖（SHA-1、HMAC-SHA1）
 
-### 限制参数
-- `CTL_R_RATE_MAX` - 最大横滚角速度 (rad/s)
-- `CTL_P_RATE_MAX` - 最大俯仰角速度 (rad/s)
-- `CTL_Y_RATE_MAX` - 最大偏航角速度 (rad/s)
-- `CTL_TILT_MAX` - 最大倾斜角度 (rad)
+## 2.2 全套技术栈
+| 分类 | 技术/工具 | 用途说明 |
+| ---- | ---- | ---- |
+| 前端框架 | uni-app(Vue3) | 一套代码打包Android/iOS/H5 |
+| IDE工具 | HBuilderX | uni-app官方开发、打包工具 |
+| 样式 | SCSS+CSS3 | 深色横屏适配界面 |
+| AI云端服务 | 阿里云视觉智能开放平台 | 物体检测API |
+| 云存储 | 阿里云OSS | 截图图片临时上传存储 |
+| 加密算法 | 原生JavaScript | 自研SHA-1、HMAC-SHA1签名 |
+| 原生能力 | 5+ HTML5 Plus | Android Canvas绘图、截图、文件管理 |
+| 测试套件 | Node内置test | 单元测试、性能基准测试 |
 
-### 姿态估计参数
-- `EST_ACC_WEIGHT` - 加速度计修正权重
-- `EST_RATES_LPF_A` - 角速度低通滤波系数
-
-## ⚠️ 安全注意事项
-
-1. **首次飞行前**：确保所有电机方向正确，桨叶安装牢固
-2. **测试电机**：使用 `mfr/mfl/mrr/mrl` 命令测试单个电机，不要装桨叶
-3. **解锁条件**：油门必须低于安全阈值才能解锁
-4. **飞行环境**：选择空旷无风环境，远离人群和障碍物
-5. **电池电压**：监控电池电压，低电压时及时降落
-
-
-
-# ESP32 无人机上位机
-
-基于 uni-app 开发的 ESP32 无人机控制应用，支持实时视频流显示、AI 物体检测和截图管理。
-
-## 项目简介
-
-本项目是一个跨平台的移动端应用，用于连接和控制 ESP32 无人机设备。通过 WebView 实时显示无人机摄像头画面，集成阿里云视觉智能 API 进行物体检测，并提供完整的截图管理功能。
-
-## 核心功能
-
-### 1. 设备连接
-- 支持输入设备 IP 地址连接（默认：192.168.4.1）
-- 实时显示连接状态和错误提示
-- 支持断开连接功能
-
-### 2. 实时视频流
-- 通过 WebView 加载无人机摄像头视频流
-- 强制横屏显示，优化观看体验
-- 支持连接失败提示和错误处理
-
-### 3. 自动截图与 AI 检测
-- 每 5 秒自动截取视频画面
-- 集成阿里云物体检测 API，支持 4 种检测模式：
-  - 全部物体：检测画面中的所有物体
-  - 人物：专门检测人物目标
-  - 车辆：专门检测车辆目标
-  - 动物：专门检测动物目标
-- 检测结果实时标注在截图上（红色检测框 + 物体标签）
-- 右下角浮层实时显示标注后的截图
-
-### 4. 截图文件管理
-- 查看所有截图文件（按时间排序）
-- 支持图片预览（支持缩放、拖拽、切换）
-- 支持批量选择、删除和保存到相册
-- 显示文件信息（名称、日期、大小）
-
-## 技术架构
-
-### 技术栈
-- **前端框架**：uni-app + Vue 3
-- **跨平台**：支持 Android、iOS、小程序等多端
-- **AI 服务**：阿里云视觉智能开放平台（物体检测）
-- **加密算法**：纯 JavaScript 实现的 SHA-1、HMAC-SHA1、Base64
-
-### 项目结构
+## 2.3 APP项目完整目录结构
 ```
 ESP32S3-Drone-Project-APP/
-├── pages/
-│   ├── index/index.vue          # 主页（连接界面）
-│   ├── webview/webview.vue      # 视频流与 AI 检测界面
-│   └── recordings/recordings.vue # 截图文件管理界面
-├── utils/
-│   └── aliyun-api.js            # 阿里云 API 调用工具
-├── App.vue                      # 应用入口
-├── manifest.json                # 应用配置（权限、版本等）
-├── pages.json                   # 页面路由配置
-└── README.md                    # 项目说明文档
+├── App.vue                 # 全局入口：强制横屏、深色主题
+├── main.js                 # Vue应用启动文件
+├── index.html              # H5模式入口页面
+├── manifest.json           # APP权限、包名、版本配置
+├── pages.json              # 页面路由配置
+├── uni.scss                # 全局样式变量
+├── logo.png                # APP图标
+│
+├─ pages/ 页面目录
+│   ├── index/index.vue     # 首页：无人机IP连接页面
+│   ├── webview/webview.vue # 核心页：视频流+AI检测
+│   └── recordings/recordings.vue # 截图文件管理页
+│
+├─ utils/ 工具封装
+│   ├── aliyun-api.js       # 阿里云签名、OSS、AI检测核心模块
+│   ├── format.js           # 时间、文件大小格式化工具
+│   └── log.js              # 分级日志打印工具
+│
+├─ test/ 单元测试
+│   ├── crypto.test.mjs     # SHA1/HMAC签名算法测试
+│   ├── parse.test.mjs      # AI检测返回数据解析测试
+│   ├── encode.test.mjs     # RFC3986 URL编码测试
+│   ├── format.test.mjs     # 格式化函数边界测试
+│   └── benchmark.mjs       # 性能基准测试
+│
+├─ static/ 静态资源
+└─ unpackage/ 编译产物目录
+    └── dist/dev/app-plus/ 开发打包产物
 ```
 
-### 核心技术实现
+## 2.4 快速部署运行
+### 2.4.1 环境准备
+1. 安装官方HBuilderX开发工具
+2. （可选AI检测）配置阿里云凭证：`utils/aliyun-api.js`
+   - accessKeyId、accessKeySecret、ossBucket、ossRegion
 
-#### 1. 阿里云物体检测流程
+### 2.4.2 项目运行
+1. HBuilderX打开项目根目录
+2. 运行目标可选：Android真机 / 浏览器H5
+3. 手机与ESP32无人机连接同一WiFi网络
+
+### 2.4.3 APK云打包发布
+1. HBuilderX → 发行 → 原生App云打包
+2. 配置包名`__UNI__37ECE35`、版本号
+3. 打包完成后在`unpackage/release/apk/`获取安装包
+4. 预编译成品：`ESPFly2.0.apk`
+
+## 2.5 页面详情说明
+### 2.5.1 设备连接页（pages/index/index.vue）
+- 用户输入ESP32飞控IP地址建立连接
+- AP模式默认IP：`192.168.4.1`，支持IP格式合法性校验
+- 连接成功自动跳转视频流页面，返回自动重置连接状态
+
+### 2.5.2 视频流+AI检测核心页（pages/webview/webview.vue）
+1. 视频展示：WebView加载飞控网页`http://设备IP`实时图传
+2. 自动化截图+AI检测完整流程
+    1. 每5秒自动截取画面，裁剪隐藏UI控件
+    2. 本地保存截图（命名规则：SS_年月日时分秒.png）
+    3. 图片上传阿里云OSS获取公开访问链接
+    4. 调用DetectObject API识别画面物体
+    5. Android原生Canvas绘制红色检测框、物体标签、置信度
+    6. 右下角浮窗实时展示标注后效果图
+3. 检测模式切换：全部物体 / 人 / 车辆 / 动物
+
+### 2.5.3 截图文件管理页（pages/recordings/recordings.vue）
+- 文件列表按拍摄时间倒序，展示文件名、时间、文件大小
+- 图片预览：支持1~4倍缩放、拖拽、左右切换图片
+- 批量操作：多选、全选、批量删除、批量保存至手机相册
+
+## 2.6 核心模块详解
+### 2.6.1 阿里云API封装（aliyun-api.js，445行核心代码）
+自研签名加密，适配阿里云开放平台鉴权规则
+
+| 导出函数 | 功能 |
+| ---- | ---- |
+| sha1(message) | RFC3174标准SHA1哈希，返回十六进制字符串 |
+| hmacSha1Base64(key, data) | HMAC-SHA1签名，输出Base64 |
+| encode(str) | RFC3986标准URL百分号编码 |
+| detectLocalImage(filePath, model) | 上传图片并执行AI物体检测 |
+| parseDetectionResult(result) | 解析API返回检测数据 |
+| getModelList() | 获取全部4种检测模型 |
+| setModel(modelId) | 切换当前AI检测模式 |
+
+### 2.6.2 工具工具库
+1. format.js
+   - formatTimestamp：时间戳转14位数字日期
+   - formatFileSize：字节自动转为B/KB/MB可读格式
+2. log.js：分级日志（debug/info/warn/error），可全局关闭调试日志
+
+### 2.6.3 单元测试套件（Node内置API，无第三方依赖）
+执行测试命令
+```bash
+# 全部测试
+node --test test/*.test.mjs
+# 单独加密算法测试
+node --test test/crypto.test.mjs
 ```
-截图 → 上传到 OSS → 获取公开 URL → 调用阿里云 DetectObject API → 解析结果 → 绘制标注框
-```
 
-#### 2. 标注绘制技术
-- 使用 Android 原生 Canvas API 绘制标注框和文字标签
-- 避免依赖 document 对象，兼容 WebView 环境
-- 支持实时更新和错误处理
+| 测试文件 | 测试覆盖场景 |
+| ---- | ---- |
+| crypto.test.mjs | SHA1、HMAC标准向量校验 |
+| encode.test.mjs | URL编码边界场景 |
+| parse.test.mjs | AI返回数据解析 |
+| format.test.mjs | 时间、文件大小格式化边界值 |
+| benchmark.mjs | 代码性能基准测试 |
 
-#### 3. 截图技术
-- 使用 `plus.nativeObj.Bitmap` 截取 WebView 内容
-- 支持指定区域截取（避免截取导航栏等 UI 元素）
-- 自动保存到 `_doc/Screenshots/` 目录
+## 2.7 APP权限与设计特点
+### 2.7.1 Android系统权限清单（manifest.json）
+| 权限 | 使用场景 |
+| ---- | ---- |
+| INTERNET | 访问无人机WiFi、阿里云API/OSS |
+| CAMERA / RECORD_AUDIO | 多媒体辅助权限 |
+| WRITE/READ_EXTERNAL_STORAGE | 截图本地存储、相册读写 |
+| ACCESS_WIFI_STATE / CHANGE_WIFI_STATE | 切换WiFi连接无人机 |
+| FOREGROUND_SERVICE | 后台持续运行 |
+| VIBRATE/FLASHLIGHT/WAKE_LOCK | 辅助功能 |
 
-## 安装与使用
+### 2.7.2 设计优势
+1. 全局强制横屏，飞行场景操作更舒适
+2. 深色深蓝渐变主题，户外强光可视性更好
+3. 加密算法全手写，无外部第三方JS依赖，体积更小
+4. 深度集成Android原生Canvas、Bitmap，绘图性能高
+5. 完整单元测试覆盖核心加密、解析逻辑，稳定性强
+6. 兼容Vue2/Vue3双运行时，适配不同uni-app版本
 
-### 前置要求
-- ESP32 无人机设备（已配置摄像头和 Wi-Fi 热点）
-- Android 或 iOS 手机
-- 阿里云账号（需开通视觉智能服务和 OSS）
+## 2.8 常见故障排查
+1. **无法连接无人机**
+   手机必须连接无人机WiFi热点，默认AP IP：192.168.4.1；核对飞控WiFi配置
+2. **AI检测功能失效**
+   阿里云AccessKey/Secret配置错误，或未开通视觉智能开放平台服务
+3. **截图保存失败**
+   系统设置手动授予APP存储读写权限
+4. **视频流卡顿**
+   缩短手机与无人机距离，减少遮挡；调整ESP32飞控图传帧率参数
 
-### 配置阿里云服务
-在 `utils/aliyun-api.js` 中配置以下信息：
+---
 
-```javascript
-const CONFIG = {
-  accessKeyId: '你的AccessKey ID',
-  accessKeySecret: '你的AccessKey Secret',
-  regionId: 'cn-shanghai',
-  oss: {
-    bucket: '你的OSS Bucket名称',
-    region: 'cn-shanghai',
-    endpoint: 'oss-cn-shanghai.aliyuncs.com',
-    folder: 'screenshots'
-  }
-}
-```
+# 第三部分 整机联动完整工作流
+## 3.1 硬件通信链路
+ESP32-S3飞控开启WiFi → 手机连接同一WiFi/无人机热点 → APP输入飞控IP建立通信
+1. APP WebView拉取飞控OV3660实时JPEG图传页面
+2. APP每5秒截图上传阿里云，AI识别画面物体
+3. APP通过MAVLink UDP 14550端口下发遥控指令、切换飞行模式
+4. 飞控实时回传姿态、高度、电压、电机数据至网页，APP实时解析展示
 
-### 编译与运行
-1. 安装 HBuilderX 开发工具
-2. 导入项目到 HBuilderX
-3. 运行到手机或模拟器
-4. 编译打包生成 APK
+## 3.2 试飞完整操作闭环
+1. 硬件接线，烧录Flix飞控固件，上电校准传感器
+2. 手机安装ESP32Fly APP，连接无人机WiFi
+3. APP输入飞控IP，建立视频与数据通信
+4. APP查看实时画面，可选开启AI目标跟踪检测
+5. 遥控器SBUS输入指令，飞控四层PID解算控制电机
+6. 飞行过程APP自动截图保存，落地后可查看/导出日志、截图素材
 
-### 使用步骤
-1. 打开应用，确保手机 Wi-Fi 已连接到无人机热点
-2. 在主页输入无人机 IP 地址（默认：192.168.4.1）
-3. 点击"连接"按钮进入视频流界面
-4. 应用将自动开始截图和 AI 检测
-5. 右下角浮层实时显示标注后的截图
-6. 点击"截图文件"查看和管理所有截图
+## 3.3 配套优势总结
+1. 飞控端：专业级四旋翼PID飞控，双姿态解算、多重故障保护、MAVLink标准协议，兼容专业地面站
+2. 移动端：独立跨平台上位机，无需电脑，随身实时图传+AI视觉识别，自动记录飞行画面
+3. 一体化配套：软硬件IP、通信协议完全适配，开箱联动，无需额外协议适配修改
 
-## 应用权限
-
-应用需要以下权限：
-- **INTERNET**：网络连接
-- **CAMERA**：摄像头访问
-- **WRITE_EXTERNAL_STORAGE**：写入外部存储
-- **READ_EXTERNAL_STORAGE**：读取外部存储
-- **RECORD_AUDIO**：录音权限
-- **ACCESS_WIFI_STATE**：访问 Wi-Fi 状态
-
-
-
-## 特色功能
-
-### 1. 智能检测模式切换
-支持一键切换物体检测模式（全部物体、人物、车辆、动物），通过客户端过滤实现分类检测。
-
-### 2. 实时标注显示
-检测结果实时标注在截图上，包括：
-- 红色检测框标注物体位置
-- 文字标签显示物体名称和置信度
-- 支持多个物体同时标注
-
-### 3. 截图文件管理
-完整的文件管理功能：
-- 支持图片预览、缩放、拖拽
-- 支持批量选择、删除、保存到相册
-- 显示文件详细信息
-
-### 4. 横屏优化设计
-- 强制横屏显示，优化无人机观看体验
-- 所有界面采用横屏布局设计
-- 深色背景配色，减少视觉疲劳
-
-
-
-### 加密算法实现
-项目使用纯 JavaScript 实现加密算法（SHA-1、HMAC-SHA1、Base64），不依赖任何第三方库，确保跨平台兼容性。
-
-### Android 原生 API 使用
-标注绘制功能使用 Android 原生 Canvas API，包括：
-- `android.graphics.BitmapFactory`
-- `android.graphics.Canvas`
-- `android.graphics.Paint`
-- `android.graphics.Color`
-
-### 错误处理
-- 截图失败自动跳过并继续下一次截图
-- AI 检测失败仍显示原始截图
-- 连接失败提供详细的错误提示
-
+---
