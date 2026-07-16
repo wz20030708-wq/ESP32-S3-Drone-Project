@@ -20,6 +20,8 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 
+#include "lpf.h"
+
 // ====================== I2C 引脚配置 ======================
 
 /** I2C数据线引脚 */
@@ -31,10 +33,10 @@
 
 // ====================== 传感器 I2C 地址 ======================
 
-/** PM280/BMP280地址(SDO=GND) */
-#define PM280_ADDR    0x76
-/** PM280/BMP280备选地址(SDO=VDD) */
-#define PM280_ALT_ADDR 0x77
+/** PM280/BMP280地址 */
+#define PM280_ADDR    0x77
+/** PM280/BMP280备选地址 */
+#define PM280_ALT_ADDR 0x76
 /** VL53L0X固定地址 */
 #define VL53L0X_ADDR  0x29
 /** AHT20温湿度传感器地址 */
@@ -69,6 +71,9 @@ float humidity = 0.0f;
 #define SEA_LEVEL_PRESSURE 1010.25f
 
 // ====================== PM280 校准系数 ======================
+
+/** 当前PM280实际I2C地址(由pm280Init检测后确定) */
+static uint8_t pm280Addr = 0;
 
 /** 温度补偿参数 */
 uint16_t dig_T1;
@@ -136,7 +141,7 @@ void i2cReadBuf(uint8_t addr, uint8_t reg, uint8_t *buf, uint8_t len) {
  */
 void pm280ReadCalibration() {
 	uint8_t buf[24];
-	i2cReadBuf(PM280_ADDR, 0x88, buf, 24);
+	i2cReadBuf(pm280Addr, 0x88, buf, 24);
 
 	dig_T1 = (uint16_t)(buf[0]  | (buf[1]  << 8));
 	dig_T2 = (int16_t)( buf[2]  | (buf[3]  << 8));
@@ -203,29 +208,39 @@ uint32_t pm280CompensatePressure(int32_t adc_P) {
 bool pm280Init() {
 	uint8_t chipId;
 
-	Wire.beginTransmission(PM280_ADDR);
+	pm280Addr = PM280_ADDR;
+	Wire.beginTransmission(pm280Addr);
 	if (Wire.endTransmission() != 0) {
-		Wire.beginTransmission(PM280_ALT_ADDR);
+		pm280Addr = PM280_ALT_ADDR;
+		Wire.beginTransmission(pm280Addr);
 		if (Wire.endTransmission() != 0) {
 			print("PM280: 未检测到设备 (I2C 无应答)\n");
+			pm280Addr = 0;
 			return false;
 		}
-		print("PM280: 仅支持地址 0x76 (SDO 接 GND)\n");
-		return false;
+		print("PM280: 使用备选地址 0x%02X\n", pm280Addr);
 	}
 
-	chipId = i2cRead8(PM280_ADDR, 0xD0);
+	chipId = i2cRead8(pm280Addr, 0xD0);
 	if (chipId != 0x58) {
 		print("PM280: 芯片 ID 不匹配 (期望 0x58, 实际 0x%02X)\n", chipId);
+		pm280Addr = 0;
 		return false;
 	}
 
 	pm280ReadCalibration();
 
-	i2cWrite8(PM280_ADDR, 0xF4, 0xB5);
-	i2cWrite8(PM280_ADDR, 0xF5, 0x10);
+	i2cWrite8(pm280Addr, 0xF4, 0xB5);
+	i2cWrite8(pm280Addr, 0xF5, 0x10);
 
-	print("PM280: 初始化成功, 芯片 ID=0x58\n");
+	// 等待第一次测量完成（正常模式下约60ms）
+	delay(80);
+
+	// 丢弃第一次读数（上电后首次数据可能不稳定）
+	uint8_t discard[6];
+	i2cReadBuf(pm280Addr, 0xF7, discard, 6);
+
+	print("PM280: 初始化成功 (地址 0x%02X, 芯片 ID=0x58)\n", pm280Addr);
 	return true;
 }
 
@@ -237,10 +252,15 @@ float pm280ReadPressure() {
 	if (!pm280Ok) return 0.0f;
 
 	uint8_t buf[6];
-	i2cReadBuf(PM280_ADDR, 0xF7, buf, 6);
+	i2cReadBuf(pm280Addr, 0xF7, buf, 6);
 
 	int32_t adc_P = ((int32_t)buf[0] << 12) | ((int32_t)buf[1] << 4) | (buf[2] >> 4);
 	int32_t adc_T = ((int32_t)buf[3] << 12) | ((int32_t)buf[4] << 4) | (buf[5] >> 4);
+
+	// 如果气压原始数据为0，可能是传感器数据未就绪，放弃本次读数
+	if (adc_P == 0) {
+		return 0.0f;
+	}
 
 	int32_t temp_x100 = pm280CompensateTemperature(adc_T);
 	temperatureC = temp_x100 / 100.0f;
@@ -299,6 +319,11 @@ float vl53l0xReadDistance() {
 
 // ====================== AHT20 温湿度传感器 ======================
 
+/** AHT20温度低通滤波器 */
+static LowPassFilter<float> aht20TempFilter(0.2f);
+/** AHT20湿度低通滤波器 */
+static LowPassFilter<float> aht20HumFilter(0.2f);
+
 /**
  * @brief AHT20传感器初始化
  * @return true表示初始化成功，false表示失败
@@ -356,8 +381,8 @@ void aht20Read() {
 	uint32_t rawH = ((uint32_t)buf[1] << 12) | ((uint32_t)buf[2] << 4) | (buf[3] >> 4);
 	uint32_t rawT = ((uint32_t)(buf[3] & 0x0F) << 16) | ((uint32_t)buf[4] << 8) | buf[5];
 
-	humidity = (rawH * 100.0f) / 0x100000;
-	temperatureC = (rawT * 200.0f / 0x100000) - 50;
+	humidity = aht20HumFilter.update((rawH * 100.0f) / 0x100000);
+	temperatureC = aht20TempFilter.update((rawT * 200.0f / 0x100000) - 50);
 }
 
 // ====================== 统一传感器接口 ======================
@@ -372,8 +397,8 @@ void setupSensors() {
 	delay(5);
 	Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
 
-	vl53l0xOk = vl53l0xInit();
 	pm280Ok = pm280Init();
+	vl53l0xOk = vl53l0xInit();
 	aht20Ok = aht20Init();
 
 	print("I2C 扫描: ");
